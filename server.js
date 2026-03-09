@@ -989,7 +989,24 @@ io.on('connection', (socket) => {
                 }
                 setTimeout(() => {
                     gameState.isWaitingForInput = true;
-                    io.to(roomId).emit('story_input_start', "▶ '이동 본당', '둘러보기', '탐색' 중 선택하십시오.");
+                    syncInputState(roomId, "▶ '이동 본당', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return;
+            } else if (trimmed === '개인정비') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 개인정비`, "user-cmd-msg");
+
+                gameState.party.forEach(p => {
+                    p.hp = Math.min(p.maxHp, p.hp + Math.floor(p.maxHp * 0.25));
+                    p.mp = Math.min(p.maxMp || 100, p.mp + 25);
+                });
+                broadcastRoomLog(roomId, "🍵 잠시 휴식을 취하며 정비를 진행합니다. 파티의 HP/MP가 25% 회복되었습니다.", "heal-msg");
+                broadcastRoomState(roomId);
+
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    syncInputState(roomId, "▶ '이동 본당', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
                 }, 1000);
                 return;
             } else if (trimmed === '이동 본당' || (cmd && cmd.action === 'MOVE')) {
@@ -1030,7 +1047,7 @@ io.on('connection', (socket) => {
                 broadcastRoomLog(roomId, "😨 제단에 손을 올리자 본당 전체가 진동하며 태자귀가 소환됩니다!", "system-msg");
                 setTimeout(() => {
                     gameState.phase = 'COMBAT';
-                    gameState.enemies = [{ id: 'boss_final', name: '태자귀', hp: 2000, maxHp: 2000, status: [], gimmickPhase: 0 }];
+                    gameState.enemies = [{ id: 'boss_final', name: '태자귀', hp: 1500, maxHp: 1500, status: [], gimmickPhase: 0 }];
                     startCombatCycle(roomId);
                 }, 1000);
                 return;
@@ -1218,7 +1235,7 @@ function startIncantationTurn(roomId) {
     gs.turnOwner = actor;
     gs.isWaitingForInput = true;
     broadcastRoomState(roomId);
-    io.to(roomId).emit('turn_start', actor);
+    syncInputState(roomId); // 강제 동기화 추가
     broadcastRoomLog(roomId, `[영창] ${actor.name}의 차례입니다.`, "system-msg");
 }
 
@@ -1389,7 +1406,8 @@ function nextTurn(roomId) {
         }
 
         gameState.isWaitingForInput = true;
-        // syncInputState가 broadcastRoomState 내부에 포함되어 있으므로 상태 전이 완료 후 호출
+        // syncInputState가 broadcastRoomState 내부에 포함되어 있으나, 명시적으로 우선 호출하여 딜레이 방지
+        syncInputState(roomId);
         broadcastRoomState(roomId);
         broadcastRoomLog(roomId, `[턴] ${nextActor.name}의 차례입니다.`, "system-msg");
     } else {
@@ -1636,6 +1654,11 @@ function executePlayerAction(roomId, actor, cmd, socket) {
         }
         const isTK = gs.party.some(p => p.id === t.id);
         let dmg = Math.floor(Math.random() * 10) + 15; // New base damage: 15-24
+
+        // [강림 부서진 도끼 보너스 적용] (task 103)
+        if (actor.name === '강림' && actor.bonusDmg) {
+            dmg += actor.bonusDmg;
+        }
         if (t.status.includes('방어')) {
             dmg = Math.floor(dmg * 0.5);
             t.status = t.status.filter(s => s !== '방어');
@@ -1715,7 +1738,13 @@ function executePlayerAction(roomId, actor, cmd, socket) {
                 setTimeout(() => nextTurn(roomId), 1000);
                 return;
             }
-            const dmg = 45;
+            let dmg = 45;
+
+            // [강림 부서진 도끼 보너스 적용] (task 103)
+            if (actor.name === '강림' && actor.bonusDmg) {
+                dmg += actor.bonusDmg;
+            }
+
             t.hp = Math.max(0, t.hp - dmg);
             broadcastRoomLog(roomId, `🗡️ 강림의 사인검이 빛을 뿜으며 ${t.name}을 베어 가릅니다! (-${dmg})`, "combat-msg");
         } else if (cmd.skillName === '혼령묶기') {
