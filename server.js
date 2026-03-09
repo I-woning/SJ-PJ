@@ -389,8 +389,9 @@ io.on('connection', (socket) => {
             if (trimmed !== '대기') {
                 gameState.waitCount = 0; // 대기 아닌 행동 시 리셋
             }
-            if (trimmed === '대기' || cmd.action === 'SEARCH') {
-                gameState.isWaitingForInput = false; // 상태 변화 행동 잠금
+            if (trimmed === '대기' || cmd.action === 'SEARCH' || cmd.action === 'LOOK') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
             }
             broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
             if (trimmed === '대기') {
@@ -403,8 +404,10 @@ io.on('connection', (socket) => {
                     broadcastRoomLog(roomId, "투명한 공포 속에 몸을 떨며 주변을 살핍니다.", "system-msg");
                 }
                 broadcastRoomState(roomId);
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
+                }, 1000);
             } else if (cmd.action === 'LOOK') {
                 gameState.poltergeistState.lookCount++;
                 if (gameState.poltergeistState.lookCount === 1) {
@@ -412,7 +415,10 @@ io.on('connection', (socket) => {
                 } else {
                     broadcastRoomLog(roomId, "🔍 주방 다른 한켠에 **[전자레인지]**, **[서랍장]**, **[식탁]**이 보입니다. 이제 의심되는 곳을 탐색해보십시오!", "guide-msg");
                 }
-                gameState.isWaitingForInput = true;
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
+                }, 1000);
             } else if (cmd.action === 'SEARCH') {
                 if (!cmd.target || cmd.target === 'NONE' || cmd.target.trim() === '') {
                     broadcastRoomLog(roomId, "무엇을 탐색할 지 몰라 허둥지둥 댑니다. (둘러보기를 사용하여 무엇을 탐색할지 찾아보세요)", "guide-msg");
@@ -1594,8 +1600,11 @@ function executePlayerAction(roomId, actor, cmd, socket) {
                 broadcastRoomLog(roomId, `💨 **[${polter.name}]**이 체력이 떨어지자 비명을 지르며 다시 주방 구석으로 숨어버렸습니다!`, "combat-msg");
                 broadcastRoomLog(roomId, "💡 다시 **[둘러보기]**와 **[탐색]**을 통해 본체를 찾아야 합니다!", "guide-msg");
                 broadcastRoomState(roomId);
-                gs.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
+                // 재은신 시에는 즉시 입력 권한을 스토리 가이드와 함께 복구
+                setTimeout(() => {
+                    gs.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
+                }, 1000);
                 return; // 현재 턴 종료 후 탐색 모드로 대기
             }
         }
