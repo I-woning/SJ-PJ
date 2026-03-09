@@ -222,7 +222,7 @@ io.on('connection', (socket) => {
                 setTimeout(() => {
                     gameState.phase = 'STORY_HALLWAY';
                     gameState.location = '1층 복도';
-                    gameState.waitCount = 0; // 초기화
+                    gameState.waitCount = 0;
                     io.to(roomId).emit('location_update', gameState.location);
                     broadcastRoomLog(roomId, "끼이익... 무거운 나무문이 열립니다.", "system-msg");
                     broadcastRoomLog(roomId, "1층 복도는 칠흑같이 어둡습니다. 벽에는 누군가 긁어놓은 듯한 손톱자국이 가득합니다.");
@@ -233,6 +233,7 @@ io.on('connection', (socket) => {
                         io.to(roomId).emit('story_input_start', "▶ '전투 준비' 라고 명령하십시오.");
                     }, 1500);
                 }, 1000);
+                return;
             } else if (trimmed === '대기') {
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
                 gameState.waitCount++;
@@ -245,7 +246,10 @@ io.on('connection', (socket) => {
                 }
                 broadcastRoomState(roomId);
                 io.to(roomId).emit('story_input_start', "▶ '진입' 이라고 명령하십시오.");
+                return;
             }
+            // 오타 혹은 정의되지 않은 명령
+            io.to(roomId).emit('story_input_start', "▶ '진입' 이라고 정확히 입력하십시오.");
             return;
         }
 
@@ -266,6 +270,7 @@ io.on('connection', (socket) => {
                     ];
                     startCombatCycle(roomId);
                 }, 1000);
+                return;
             } else if (trimmed === '대기') {
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
                 gameState.waitCount++;
@@ -278,16 +283,19 @@ io.on('connection', (socket) => {
                 }
                 broadcastRoomState(roomId);
                 io.to(roomId).emit('story_input_start', "▶ '전투 준비' 라고 명령하십시오.");
+                return;
             }
+            io.to(roomId).emit('story_input_start', "▶ '전투 준비' 라고 정확히 입력하십시오.");
             return;
         }
 
         // [복도 클리어 후 선택지]
         if (gameState.phase === 'STORY_AFTER_COMBAT') {
-            if (!gameState.isWaitingForInput) return; // 잠금장치
+            if (!gameState.isWaitingForInput) return;
             const cmd = parseCommand(trimmed);
             if (trimmed === '대기') {
-                gameState.isWaitingForInput = false; // 즉시 잠금
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
                 gameState.waitCount++;
                 if (gameState.waitCount > 3) {
@@ -298,11 +306,14 @@ io.on('connection', (socket) => {
                     broadcastRoomLog(roomId, "파티원들은 팽팽한 긴장감 속에 무기를 쥐고 주변을 경계합니다. 어둠 속에서 무언가 다시 튀어나올 것만 같습니다.", "system-msg");
                 }
                 broadcastRoomState(roomId);
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
-            }
-            else if (trimmed === '개인정비' || (cmd && cmd.action === 'REST')) {
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return;
+            } else if (trimmed === '개인정비' || (cmd && cmd.action === 'REST')) {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: 개인정비`, "user-cmd-msg");
                 if (gameState.hasRested) {
                     broadcastRoomLog(roomId, "이미 주변의 쓸만한 물품을 다 사용하여 더 이상 정비할 수 없습니다.");
@@ -310,7 +321,7 @@ io.on('connection', (socket) => {
                     gameState.hasRested = true;
                     broadcastRoomLog(roomId, "파티원들이 잠시 숨을 고르며 전열을 가가듬습니다.");
                     gameState.party.forEach(p => {
-                        const ratio = 0.1 + Math.random() * 0.1; // 10%~20%
+                        const ratio = 0.1 + Math.random() * 0.1;
                         const hpRec = Math.floor(p.maxHp * ratio);
                         const mpRec = Math.floor((p.maxMp || 100) * ratio);
                         p.hp = Math.min(p.maxHp, p.hp + hpRec);
@@ -319,18 +330,24 @@ io.on('connection', (socket) => {
                     });
                     broadcastRoomState(roomId);
                 }
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (cmd && cmd.action === 'SEARCH') {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: 탐색`, "user-cmd-msg");
                 broadcastRoomLog(roomId, "🔦 복도를 훑어봅니다. 벽면에는 마르지 않은 핏자국이 기괴한 무늬를 그리며 흘러내리고 있고, 낡은 벽지 뒤로 빛바랜 부적의 흔적들이 보입니다. 건물이 누군가를 가두기 위해 설계된 것 같은 불길한 느낌이 듭니다.", "system-msg");
                 broadcastRoomLog(roomId, "아이콘 클릭 대신 명령어를 입력하여 다음 구역으로 넘어가세요. 건너편 통로에 주방이 보입니다.");
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
-            }
-            else if (trimmed === '이동' || (cmd && cmd.action === 'MOVE')) {
-                gameState.isWaitingForInput = false; // 즉시 잠금
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return;
+            } else if (trimmed === '이동' || (cmd && cmd.action === 'MOVE')) {
+                gameState.isWaitingForInput = false;
                 gameState.waitCount = 0;
                 gameState.hasRested = false;
                 io.to(roomId).emit('turn_wait');
@@ -345,7 +362,9 @@ io.on('connection', (socket) => {
                         io.to(roomId).emit('story_input_start', "▶ '전투 준비' 라고 명령하십시오.");
                     }, 1500);
                 }, 1000);
+                return;
             }
+            io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
             return;
         }
 
@@ -354,7 +373,7 @@ io.on('connection', (socket) => {
             if (!gameState.isWaitingForInput) return;
             if (trimmed === '전투 준비') {
                 gameState.isWaitingForInput = false;
-                gameState.waitCount = 0; // 리셋
+                gameState.waitCount = 0;
                 io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
                 setTimeout(() => {
@@ -366,6 +385,7 @@ io.on('connection', (socket) => {
                     gameState.isWaitingForInput = true;
                     io.to(roomId).emit('story_input_start', "▶ '둘러보기' 명령어를 입력하여 주변 사물을 확인하세요.");
                 }, 1000);
+                return;
             } else if (trimmed === '대기') {
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
                 gameState.waitCount++;
@@ -378,7 +398,9 @@ io.on('connection', (socket) => {
                 }
                 broadcastRoomState(roomId);
                 io.to(roomId).emit('story_input_start', "▶ '전투 준비' 라고 명령하십시오.");
+                return;
             }
+            io.to(roomId).emit('story_input_start', "▶ '전투 준비' 라고 정확히 입력하십시오.");
             return;
         }
 
@@ -387,14 +409,13 @@ io.on('connection', (socket) => {
             if (!gameState.isWaitingForInput) return;
             const cmd = parseCommand(trimmed);
             if (trimmed !== '대기') {
-                gameState.waitCount = 0; // 대기 아닌 행동 시 리셋
+                gameState.waitCount = 0;
             }
-            if (trimmed === '대기' || cmd.action === 'SEARCH' || cmd.action === 'LOOK') {
+
+            if (trimmed === '대기') {
                 gameState.isWaitingForInput = false;
                 io.to(roomId).emit('turn_wait');
-            }
-            broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
-            if (trimmed === '대기') {
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
                 gameState.waitCount++;
                 if (gameState.waitCount > 3) {
                     broadcastRoomLog(roomId, "다리가 저려옵니다. 정신력이 감소합니다.", "system-msg");
@@ -408,7 +429,11 @@ io.on('connection', (socket) => {
                     gameState.isWaitingForInput = true;
                     io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
                 }, 1000);
+                return;
             } else if (cmd.action === 'LOOK') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
                 gameState.poltergeistState.lookCount++;
                 if (gameState.poltergeistState.lookCount === 1) {
                     broadcastRoomLog(roomId, "🔍 주방 한켠에 **[냉장고]**, **[싱크대]**, **[가스레인지]**가 보입니다. 더 둘러보시겠습니까? 아니면 탐색해보시겠습니까?", "guide-msg");
@@ -419,7 +444,11 @@ io.on('connection', (socket) => {
                     gameState.isWaitingForInput = true;
                     io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
                 }, 1000);
+                return;
             } else if (cmd.action === 'SEARCH') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
                 if (!cmd.target || cmd.target === 'NONE' || cmd.target.trim() === '') {
                     broadcastRoomLog(roomId, "무엇을 탐색할 지 몰라 허둥지둥 댑니다. (둘러보기를 사용하여 무엇을 탐색할지 찾아보세요)", "guide-msg");
                     setTimeout(() => {
@@ -443,18 +472,15 @@ io.on('connection', (socket) => {
                     return;
                 } else {
                     broadcastRoomLog(roomId, `💨 **[${cmd.target}]**에는 아무것도 없었습니다...`, "combat-msg");
-                    // 탐색 실패 시 폴터가이스트의 기습 (랜덤 1인 피해)
                     const alive = gameState.party.filter(p => p.hp > 0);
                     const t = alive[Math.floor(Math.random() * alive.length)];
                     const dmg = 15;
                     t.hp = Math.max(0, t.hp - dmg);
                     broadcastRoomLog(roomId, `😨 정적을 깨고 폴터가이스트가 기습합니다! ${t.name}에게 ${dmg} 피해!`, "combat-msg");
                     if (gameState.enemies.length > 0) {
-                        // 이미 전투 중인 경우(재은신 후 탐색 실패) 턴을 넘김
                         setTimeout(() => nextTurn(roomId), 1000);
                         return;
                     } else {
-                        // 스토리 단계에서 탐색 실패 시 입력 복구
                         setTimeout(() => {
                             gameState.isWaitingForInput = true;
                             io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
@@ -607,6 +633,7 @@ io.on('connection', (socket) => {
             const cmd = parseCommand(trimmed);
             if (trimmed === '대기') {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 대기`, "user-cmd-msg");
                 gameState.waitCount++;
                 if (gameState.waitCount > 3) {
@@ -621,8 +648,10 @@ io.on('connection', (socket) => {
                     gameState.isWaitingForInput = true;
                     io.to(roomId).emit('story_input_start', "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.");
                 }, 1000);
+                return;
             } else if (trimmed === '개인정비' || (cmd && cmd.action === 'REST')) {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: 개인정비`, "user-cmd-msg");
                 if (gameState.hasRested) broadcastRoomLog(roomId, "이미 정비를 마쳤습니다.");
                 else {
@@ -638,10 +667,14 @@ io.on('connection', (socket) => {
                     });
                     broadcastRoomState(roomId);
                 }
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (cmd && cmd.action === 'SEARCH') {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어] 파티 행동</span>: ${trimmed}`, "user-cmd-msg");
                 if (cmd.target === '냉장고') {
                     if (gameState.fridgeSearched) broadcastRoomLog(roomId, "냉장고는 비어 있습니다.");
@@ -676,8 +709,11 @@ io.on('connection', (socket) => {
                 } else {
                     broadcastRoomLog(roomId, "주방 안쪽에 <b>[냉장고]</b>와 <b>[서랍장]</b>이 보입니다.");
                 }
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (trimmed === '이동 2층' || (cmd && cmd.action === 'MOVE' && cmd.target === '2층')) {
                 gameState.isWaitingForInput = false;
                 gameState.waitCount = 0;
@@ -695,8 +731,6 @@ io.on('connection', (socket) => {
                     }, 1500);
                 }, 1000);
                 return;
-            } else {
-                broadcastRoomLog(roomId, "원하시는 행동(이동 2층, 탐색, 개인정비, 대기)을 입력하세요.");
             }
             io.to(roomId).emit('story_input_start', "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.");
             return;
@@ -708,6 +742,7 @@ io.on('connection', (socket) => {
             const cmd = parseCommand(trimmed);
             if (trimmed === '대기') {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 대기`, "user-cmd-msg");
                 gameState.waitCount++;
                 if (gameState.waitCount > 3) {
@@ -718,8 +753,11 @@ io.on('connection', (socket) => {
                     broadcastRoomLog(roomId, "파티원들은 삐걱거리는 복도 한가운데서 숨을 죽인 채 안방 쪽을 응시합니다.", "system-msg");
                 }
                 broadcastRoomState(roomId);
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (trimmed === '이동 안방' || trimmed === '이동' || (cmd && cmd.action === 'MOVE' && (cmd.target === '안방' || cmd.target === 'NONE'))) {
                 gameState.isWaitingForInput = false;
                 gameState.waitCount = 0;
@@ -737,7 +775,10 @@ io.on('connection', (socket) => {
                     ];
                     startCombatCycle(roomId);
                 }, 1000);
+                return;
             } else if (cmd && cmd.action === 'SEARCH') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 탐색`, "user-cmd-msg");
                 if (cmd.target === '서랍장' && !gameState.room2fDrawerSearched) {
                     gameState.room2fDrawerSearched = true;
@@ -747,9 +788,13 @@ io.on('connection', (socket) => {
                 } else {
                     broadcastRoomLog(roomId, "🔦 2층 복도를 살펴봅니다. 어둡고 긴 복도 끝에 안방 문이 보입니다. [서랍장]이 있습니다.", "system-msg");
                 }
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색' 중 선택하십시오.");
+                }, 1000);
+                return;
             }
+            io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색' 중 선택하십시오.");
             return;
         }
 
@@ -762,17 +807,34 @@ io.on('connection', (socket) => {
                 if (target) {
                     gameState.coatBonusPlayerId = target.id;
                     gameState.waitingForCoatUser = false;
+                    broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: ${trimmed}`, "user-cmd-msg");
                     broadcastRoomLog(roomId, `🧥 **[${target.name}]**이 코트를 걸쳤습니다.`, "heal-msg");
                     broadcastRoomState(roomId);
+                    setTimeout(() => {
+                        gameState.isWaitingForInput = true;
+                        io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                    }, 1000);
+                } else {
+                    broadcastRoomLog(roomId, "명단에 있는 정확한 이름을 입력하십시오.", "system-msg");
+                    io.to(roomId).emit('story_input_start', "▶ 코트를 입을 캐릭터의 정확한 이름을 입력하세요.");
                 }
-                io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
                 return;
             }
 
             if (cmd && cmd.action === 'LOOK') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 둘러보기`, "user-cmd-msg");
                 broadcastRoomLog(roomId, "안방에는 **[옷장]**, **[화장대]**, **[서랍장]**이 보입니다.");
-                io.to(roomId).emit('story_input_start', "▶ '탐색 [대상]' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '탐색 [대상]' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (cmd && cmd.action === 'SEARCH') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 탐색`, "user-cmd-msg");
                 if (cmd.target === '옷장' && !gameState.room2fClosetSearched) {
                     gameState.room2fClosetSearched = true;
                     broadcastRoomLog(roomId, "🧥 **[두꺼운 코트]**를 발견했습니다! 누구에게 입히시겠습니까?", "heal-msg");
@@ -785,16 +847,20 @@ io.on('connection', (socket) => {
                     gameState.phase = 'COMBAT';
                     gameState.returnPhase = 'STORY_AFTER_ROOM2F';
                     startCombatCycle(roomId);
+                    return;
                 } else if (cmd.target === '서랍장' && !gameState.room2fInRoomDrawerSearched) {
                     gameState.room2fInRoomDrawerSearched = true;
                     broadcastRoomLog(roomId, "📜 서랍장에서 정체불명의 종이 조각을 발견했습니다. (최대 MP +10)", "heal-msg");
                     gameState.party.forEach(p => { p.maxMp = (p.maxMp || 100) + 10; p.mp += 10; });
                     broadcastRoomState(roomId);
                 } else {
-                    broadcastRoomLog(roomId, "조사할 대상을 선택하세요. (옷장, 화장대, 서랍장)");
+                    broadcastRoomLog(roomId, "이미 조사했거나 조사할 수 없는 대상입니다.");
                 }
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (trimmed === '이동 지하실' || (cmd && cmd.action === 'MOVE')) {
                 gameState.isWaitingForInput = false;
                 gameState.waitCount = 0;
@@ -812,19 +878,41 @@ io.on('connection', (socket) => {
                 }, 1000);
                 return;
             } else if (trimmed === '개인정비' || (cmd && cmd.action === 'REST')) {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 개인정비`, "user-cmd-msg");
                 if (!gameState.hasRested) {
                     gameState.hasRested = true;
                     gameState.party.forEach(p => { p.hp = Math.min(p.maxHp, p.hp + 25); p.mp = Math.min(p.maxMp || 100, p.mp + 25); });
                     broadcastRoomLog(roomId, "🍀 휴식을 취했습니다. (HP/MP +25)");
                     broadcastRoomState(roomId);
+                } else {
+                    broadcastRoomLog(roomId, "이미 정비를 마쳤습니다.");
                 }
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (trimmed === '대기') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 대기`, "user-cmd-msg");
                 gameState.waitCount++;
-                if (gameState.waitCount > 3) gameState.party.forEach(p => p.mp = Math.max(0, p.mp - 5));
+                if (gameState.waitCount > 3) {
+                    broadcastRoomLog(roomId, "다리가 저려옵니다. 정신력이 감소합니다.", "system-msg");
+                    gameState.party.forEach(p => p.mp = Math.max(0, p.mp - 5));
+                } else {
+                    broadcastRoomLog(roomId, "주변의 적막 속에 누군가의 숨소리만 들립니다.", "system-msg");
+                }
                 broadcastRoomState(roomId);
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return;
             }
+            io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
             return;
         }
 
@@ -842,18 +930,31 @@ io.on('connection', (socket) => {
                     broadcastRoomLog(roomId, "👹 머리 없는 거구의 악귀가 나타납니다!", "system-msg");
                     startCombatCycle(roomId);
                 }, 1000);
+                return;
             } else if (trimmed === '대기') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 대기`, "user-cmd-msg");
                 gameState.waitCount++;
                 if (gameState.waitCount > 3) gameState.party.forEach(p => p.mp = Math.max(0, p.mp - 5));
                 broadcastRoomState(roomId);
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '진입', '대기', '탐색' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '진입', '대기', '탐색' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (cmd && cmd.action === 'SEARCH') {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 탐색`, "user-cmd-msg");
                 broadcastRoomLog(roomId, "🔦 철문 주변을 조사합니다. 불길한 기운이 감돕니다.");
-                gameState.isWaitingForInput = true;
-                io.to(roomId).emit('story_input_start', "▶ '진입', '대기', '탐색' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '진입', '대기', '탐색' 중 선택하십시오.");
+                }, 1000);
+                return;
             }
+            io.to(roomId).emit('story_input_start', "▶ '진입', '대기', '탐색' 중 선택하십시오.");
             return;
         }
 
@@ -862,8 +963,19 @@ io.on('connection', (socket) => {
             if (!gameState.isWaitingForInput) return;
             const cmd = parseCommand(trimmed);
             if (cmd && cmd.action === 'LOOK') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 둘러보기`, "user-cmd-msg");
                 broadcastRoomLog(roomId, "주변에는 **[부서진 도끼]**와 **[고대의 제단]**이 보입니다.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '탐색 [대상]' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (cmd && cmd.action === 'SEARCH') {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 탐색`, "user-cmd-msg");
                 if (cmd.target === '부서진 도끼' && !gameState.demonAxeSearched) {
                     gameState.demonAxeSearched = true;
                     broadcastRoomLog(roomId, "🪓 부서진 도끼에서 영력을 채집했습니다. (강림 공격력 상승)", "heal-msg");
@@ -874,10 +986,17 @@ io.on('connection', (socket) => {
                     gameState.party.forEach(p => { p.hp = Math.min(p.maxHp, p.hp + Math.floor(p.maxHp * 0.25)); p.mp = Math.min(p.maxMp || 100, p.mp + 25); });
                     broadcastRoomLog(roomId, "🍀 제단에서 빛이 뿜어져 나오며 파티를 치유합니다. (25% 회복)", "heal-msg");
                     broadcastRoomState(roomId);
+                } else {
+                    broadcastRoomLog(roomId, "이미 조사했거나 조사할 수 없는 대상입니다.");
                 }
-                io.to(roomId).emit('story_input_start', "▶ '이동 본당', '둘러보기', '탐색' 중 선택하십시오.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동 본당', '둘러보기', '탐색' 중 선택하십시오.");
+                }, 1000);
+                return;
             } else if (trimmed === '이동 본당' || (cmd && cmd.action === 'MOVE')) {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
                 broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 이동 본당`, "user-cmd-msg");
                 setTimeout(() => {
                     gameState.phase = 'STORY_BASEMENT_CORE_ENTRY';
@@ -886,7 +1005,9 @@ io.on('connection', (socket) => {
                     broadcastRoomLog(roomId, "🌑 본당에 들어서자 벽면에 붉은 한자들이 기괴하게 빛납니다.", "system-msg");
                     setTimeout(() => { gameState.isWaitingForInput = true; io.to(roomId).emit('story_input_start', "▶ '문자를 확인한다' 라고 입력하십시오."); }, 1500);
                 }, 1000);
+                return;
             }
+            io.to(roomId).emit('story_input_start', "▶ '이동 본당', '둘러보기', '탐색' 중 선택하십시오.");
             return;
         }
 
@@ -895,21 +1016,28 @@ io.on('connection', (socket) => {
             if (!gameState.isWaitingForInput) return;
             if (trimmed === '문자를 확인한다') {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: ${trimmed}`, "user-cmd-msg");
                 const idioms = ["사불범정 만마항복 (邪不犯正 萬魔降伏)", "금성철벽 천라지망 (金城鐵壁 天羅地網)", "파사현정 명경지수 (破邪顯正 明경지수)", "권선징악 인과응보 (勸善懲惡 因果應報)"];
                 idioms.sort(() => 0.5 - Math.random());
                 broadcastRoomLog(roomId, "📜 벽면의 부정한 기운을 담은 글자들이 뒤섞입니다:", "system-msg");
                 idioms.forEach(txt => broadcastRoomLog(roomId, `✨ ${txt}`, "guide-msg"));
                 broadcastRoomLog(roomId, "정면에는 제단이 서있다. 다가가서 확인해보자.", "system-msg");
                 setTimeout(() => { gameState.isWaitingForInput = true; io.to(roomId).emit('story_input_start', "▶ '제단 확인' 이라고 입력하십시오."); }, 1000);
+                return;
             } else if (trimmed === '제단 확인') {
                 gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: ${trimmed}`, "user-cmd-msg");
                 broadcastRoomLog(roomId, "😨 제단에 손을 올리자 본당 전체가 진동하며 태자귀가 소환됩니다!", "system-msg");
                 setTimeout(() => {
                     gameState.phase = 'COMBAT';
                     gameState.enemies = [{ id: 'boss_final', name: '태자귀', hp: 2000, maxHp: 2000, status: [], gimmickPhase: 0 }];
                     startCombatCycle(roomId);
-                }, 1500);
+                }, 1000);
+                return;
             }
+            io.to(roomId).emit('story_input_start', "▶ '문자를 확인한다' 혹은 '제단 확인' 이라고 입력하십시오.");
             return;
         }
         io.to(roomId).emit('story_input_start', "▶ 명령을 입력하세요.");
