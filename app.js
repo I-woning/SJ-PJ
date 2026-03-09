@@ -270,7 +270,7 @@ socket.on('story_input_start', (placeholder) => {
 });
 
 // 전투 모드 입력 대기
-socket.on('turn_start', (turnOwner) => {
+socket.on('turn_start', (turnOwner, serverPlaceholder) => {
   inputEl.disabled = false;
   sendBtn.disabled = false;
 
@@ -278,7 +278,9 @@ socket.on('turn_start', (turnOwner) => {
     inputEl.focus();
   }
 
-  if (turnOwner) {
+  if (serverPlaceholder) {
+    inputEl.placeholder = serverPlaceholder;
+  } else if (turnOwner) {
     const SKILL_HINTS = {
       '무당': '스킬 징치기',
       '퇴마사': '스킬 사인검베기 [적/아군]',
