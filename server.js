@@ -407,7 +407,11 @@ io.on('connection', (socket) => {
             } else if (cmd.action === 'SEARCH') {
                 if (!cmd.target || cmd.target === 'NONE' || cmd.target.trim() === '') {
                     broadcastRoomLog(roomId, "무엇을 탐색할 지 몰라 허둥지둥 댑니다. (둘러보기를 사용하여 무엇을 탐색할지 찾아보세요)", "guide-msg");
-                    setTimeout(() => nextTurn(roomId), 1000);
+                    setTimeout(() => {
+                        gameState.isWaitingForInput = true;
+                        io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
+                        broadcastRoomState(roomId);
+                    }, 1000);
                     return;
                 }
                 if (cmd.target === gameState.poltergeistState.hiddenSpot) {
@@ -433,6 +437,14 @@ io.on('connection', (socket) => {
                     if (gameState.enemies.length > 0) {
                         // 이미 전투 중인 경우(재은신 후 탐색 실패) 턴을 넘김
                         setTimeout(() => nextTurn(roomId), 1000);
+                        return;
+                    } else {
+                        // 스토리 단계에서 탐색 실패 시 입력 복구
+                        setTimeout(() => {
+                            gameState.isWaitingForInput = true;
+                            io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
+                            broadcastRoomState(roomId);
+                        }, 1000);
                         return;
                     }
                     broadcastRoomState(roomId);
@@ -1048,6 +1060,26 @@ function nextTurn(roomId) {
                 }
                 gameState.returnPhase = null;
                 io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+            } else if (gameState.location === '지하실 입구') {
+                gameState.phase = 'STORY_AFTER_BASEMENT_ENTRANCE';
+                gameState.isWaitingForInput = true;
+                broadcastRoomLog(roomId, "✅ 거구의 악귀를 쓰러뜨렸습니다! 철문 너머로 깊은 지하실 본당이 보입니다.", "system-msg");
+                io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+            } else if (gameState.location === '지하실 본당') {
+                // 최종 보스 태자귀 처치 시
+                gameState.phase = 'FINAL_ID_CHECK';
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('darken_ui');
+                broadcastRoomLog(roomId, "🌑 태자귀가 비릿하게 웃으며 손을 뻗습니다. \"너희는 이 굴레에서 영원히 벗어나지 못한다.\"", "combat-msg");
+                setTimeout(() => {
+                    broadcastRoomLog(roomId, "🌑 주변의 풍경이 일그러지며 태자귀의 목소리가 메아리 칩니다. \"가엾구나. 사실 네 곁에는 아무도 없다. 그들은 모두 내가 만든 환영일 뿐이지.\"", "combat-msg");
+                    setTimeout(() => {
+                        broadcastRoomLog(roomId, "🌑 \"그렇지 않다고 생각하나? 그렇다면 말해보거라 너가 지금까지 같이 해온 친구들의 이름과 너의 이름을\"", "combat-msg");
+                        const idList = gameState.clients.map(c => c.nickname).join(', ');
+                        io.to(roomId).emit('story_input_start', `▶ 같이 진행해온 이들의 이름을 입력하세요. (예: ${idList})`);
+                        gameState.isWaitingForInput = true;
+                    }, 2500);
+                }, 2500);
             }
         }
         return;
@@ -1144,23 +1176,7 @@ function nextTurn(roomId) {
             }
         }
 
-        // [전투 종료 및 최종 엔딩 체크]
-        if (nextActor.name === '태자귀' && nextActor.hp <= 0) {
-            gameState.phase = 'FINAL_ID_CHECK';
-            gameState.isWaitingForInput = false;
-            io.to(roomId).emit('darken_ui'); // UI 암전 이벤트
-            broadcastRoomLog(roomId, "🌑 태자귀가 비릿하게 웃으며 손을 뻗습니다. \"너희는 이 굴레에서 영원히 벗너지 못한다.\"", "combat-msg");
-            setTimeout(() => {
-                broadcastRoomLog(roomId, "🌑 주변의 풍경이 일그러지며 태자귀의 목소리가 메아리 칩니다. \"가엾구나. 사실 네 곁에는 아무도 없다. 그들은 모두 내가 만든 환영일 뿐이지.\"", "combat-msg");
-                setTimeout(() => {
-                    broadcastRoomLog(roomId, "🌑 \"그렇지 않다고 생각하나? 그렇다면 말해보거라 너가 지금까지 같이 해온 친구들의 이름과 너의 이름을\"", "combat-msg");
-                    const idList = gameState.clients.map(c => c.nickname).join(', ');
-                    io.to(roomId).emit('story_input_start', `▶ 같이 진행해온 이들의 이름을 입력하세요. (예: ${idList})`);
-                    gameState.isWaitingForInput = true;
-                }, 2500);
-            }, 2500);
-            return;
-        }
+        // [전투 종료 및 최종 엔딩 체크] - nextTurn 상단으로 로직 이동됨
         if (nextActor.mp < (nextActor.maxMp || 100)) {
             nextActor.mp = Math.min(nextActor.maxMp || 100, nextActor.mp + 3);
             broadcastRoomLog(roomId, `🍀 ${nextActor.name}의 MP가 자연적으로 회복됩니다. (+3)`, "guide-msg");
