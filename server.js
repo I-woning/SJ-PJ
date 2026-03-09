@@ -406,13 +406,13 @@ io.on('connection', (socket) => {
                 gameState.isWaitingForInput = true;
                 io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
             } else if (cmd.action === 'LOOK') {
-                gameState.isWaitingForInput = false;
                 gameState.poltergeistState.lookCount++;
                 if (gameState.poltergeistState.lookCount === 1) {
                     broadcastRoomLog(roomId, "🔍 주방 한켠에 **[냉장고]**, **[싱크대]**, **[가스레인지]**가 보입니다. 더 둘러보시겠습니까? 아니면 탐색해보시겠습니까?", "guide-msg");
                 } else {
                     broadcastRoomLog(roomId, "🔍 주방 다른 한켠에 **[전자레인지]**, **[서랍장]**, **[식탁]**이 보입니다. 이제 의심되는 곳을 탐색해보십시오!", "guide-msg");
                 }
+                gameState.isWaitingForInput = true;
             } else if (cmd.action === 'SEARCH') {
                 if (!cmd.target || cmd.target === 'NONE' || cmd.target.trim() === '') {
                     broadcastRoomLog(roomId, "무엇을 탐색할 지 몰라 허둥지둥 댑니다. (둘러보기를 사용하여 무엇을 탐색할지 찾아보세요)", "guide-msg");
