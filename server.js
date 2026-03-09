@@ -1028,16 +1028,19 @@ function nextTurn(roomId) {
             broadcastRoomState(roomId);
             if (gameState.location === '1층 복도') {
                 gameState.phase = 'STORY_AFTER_COMBAT';
+                gameState.isWaitingForInput = true;
                 broadcastRoomLog(roomId, "✅ 전투 종료! 앞을 가로막는 괴물이 모두 사라지고 건너편에는 주방이 보입니다. 주방으로 이동하시겠습니까?", "system-msg");
                 io.to(roomId).emit('story_input_start', "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
             } else if (gameState.location === '1층 주방 (식당)') {
                 gameState.phase = gameState.returnPhase || 'STORY_AFTER_KITCHEN';
                 gameState.returnPhase = null;
+                gameState.isWaitingForInput = true;
                 broadcastRoomLog(roomId, "✅ 전투 종료! 무엇을 진행하시겠습니까?", "system-msg");
                 io.to(roomId).emit('story_input_start', "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.");
             } else if (gameState.location === '2층 안방') {
                 gameState.phase = 'STORY_AFTER_ROOM2F';
                 gameState.isMirrorGlitchActive = false; // 왜곡 해제
+                gameState.isWaitingForInput = true;
                 if (gameState.returnPhase === 'STORY_AFTER_ROOM2F') {
                     broadcastRoomLog(roomId, "✅ 상황 종료!", "system-msg");
                 } else {
