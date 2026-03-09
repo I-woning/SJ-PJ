@@ -477,17 +477,15 @@ io.on('connection', (socket) => {
                     const dmg = 15;
                     t.hp = Math.max(0, t.hp - dmg);
                     broadcastRoomLog(roomId, `😨 정적을 깨고 폴터가이스트가 기습합니다! ${t.name}에게 ${dmg} 피해!`, "combat-msg");
-                    if (gameState.enemies.length > 0) {
-                        setTimeout(() => nextTurn(roomId), 1000);
-                        return;
-                    } else {
-                        setTimeout(() => {
-                            gameState.isWaitingForInput = true;
-                            io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
-                            broadcastRoomState(roomId);
-                        }, 1000);
-                        return;
-                    }
+
+                    // [버그 수정] 스토리 페이즈에서 nextTurn 호출 시 enemies 배열의 비정상적 상태(이전 전투 잔재 등)로 인해 루프 발생 위험
+                    // 주방 기습은 스토리 연출이므로 즉시 입력창을 복구하도록 변경
+                    setTimeout(() => {
+                        gameState.isWaitingForInput = true;
+                        io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
+                        broadcastRoomState(roomId);
+                    }, 1000);
+                    return;
                 }
             }
             io.to(roomId).emit('story_input_start', "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.");
