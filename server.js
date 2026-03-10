@@ -560,10 +560,16 @@ io.on('connection', (socket) => {
                         broadcastRoomLog(roomId, "✨ **영창 성공!** 강력한 신성력이 태자귀를 억누릅니다! (2턴 간 기절)", "heal-msg");
                         gameState.completedIndices = [];
                         io.to(roomId).emit('turn_wait');
-                        setTimeout(() => startCombatCycle(roomId), 1500);
+                        setTurnWatchdog(roomId);
+                        setTimeout(() => {
+                            try { startCombatCycle(roomId); } catch (e) { console.error('[영창성공전투전환에러]', e); startCombatCycle(roomId); }
+                        }, 1500);
                     } else {
                         // 다음 무작위 턴 가동
-                        setTimeout(() => startIncantationTurn(roomId), 1000);
+                        setTurnWatchdog(roomId);
+                        setTimeout(() => {
+                            try { startIncantationTurn(roomId); } catch (e) { console.error('[영창진행전환에러]', e); startIncantationTurn(roomId); }
+                        }, 1000);
                     }
                     return;
                 }
@@ -1243,6 +1249,56 @@ function startIncantationTurn(roomId) {
     broadcastRoomLog(roomId, `[영창] ${actor.name}의 차례입니다.`, "system-msg");
 }
 
+// [안전장치] 워치독 타이머 - 10초 내 턴이 진행되지 않으면 자동 복구
+function setTurnWatchdog(roomId) {
+    const gs = rooms[roomId];
+    if (!gs) return;
+    // 이전 워치독 취소
+    if (gs._watchdogTimer) clearTimeout(gs._watchdogTimer);
+    gs._watchdogTimer = setTimeout(() => {
+        const currentGs = rooms[roomId];
+        if (!currentGs) return;
+        if (currentGs.phase === 'COMBAT' || currentGs.phase === 'INCANTATION') {
+            console.log(`[워치독] 10초 경과 - 턴 자동 복구 (roomId: ${roomId}, phase: ${currentGs.phase})`);
+            if (currentGs.phase === 'INCANTATION') {
+                // 영창 모드에서 멈춘 경우 전투로 강제 복귀
+                currentGs.phase = 'COMBAT';
+                currentGs.completedIndices = [];
+            }
+            // 턴 큐 완전 재초기화
+            try {
+                startCombatCycle(roomId);
+            } catch (e) {
+                console.error('[워치독 복구 실패]', e);
+                currentGs.isWaitingForInput = true;
+                syncInputState(roomId);
+            }
+        }
+    }, 10000);
+}
+
+// [안전장치] 안전한 지연 턴 전환 - setTimeout을 래핑하여 에러 발생 시에도 턴 진행 보장
+function safeNextTurn(roomId, delay = 1000) {
+    const gs = rooms[roomId];
+    if (!gs) return;
+    // 워치독 재설정
+    setTurnWatchdog(roomId);
+    setTimeout(() => {
+        try {
+            nextTurn(roomId);
+        } catch (e) {
+            console.error('[safeNextTurn 에러]', e);
+            try { startCombatCycle(roomId); } catch (e2) {
+                console.error('[startCombatCycle 복구 실패]', e2);
+                if (rooms[roomId]) {
+                    rooms[roomId].isWaitingForInput = true;
+                    syncInputState(roomId);
+                }
+            }
+        }
+    }, delay);
+}
+
 function startEnding(roomId) {
     broadcastRoomLog(roomId, "✨ 폐가를 뒤덮었던 뒤틀린 풍경들이 한 줄기 정화의 빛과 함께 흩어지기 시작합니다. 절망스러웠던 비명과 속삭임은 사라지고, 그 자리에 깊고 평온한 침묵이 찾아옵니다.", "heal-msg");
     setTimeout(() => {
@@ -1258,305 +1314,340 @@ function startEnding(roomId) {
 function nextTurn(roomId) {
     const gameState = rooms[roomId];
     if (!gameState) return;
-    const aliveEnemies = gameState.enemies.filter(e => e.hp > 0);
-    const hasCharmed = gameState.party.some(p => p.status.includes('매혹'));
 
-    if (aliveEnemies.length === 0) {
-        if (gameState.phase === 'COMBAT') {
-            gameState.party.forEach(p => p.status = []);
-            gameState.turnOwner = null; // 전투 종료 시 턴 소유자 초기화
-            broadcastRoomState(roomId);
-            if (gameState.location === '1층 복도') {
-                gameState.phase = 'STORY_AFTER_COMBAT';
-                gameState.isWaitingForInput = true;
-                broadcastRoomLog(roomId, "✅ 전투 종료! 앞을 가로막는 괴물이 모두 사라지고 건너편에는 주방이 보입니다. 주방으로 이동하시겠습니까?", "system-msg");
-                syncInputState(roomId, "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
-            } else if (gameState.location === '1층 주방 (식당)') {
-                gameState.phase = gameState.returnPhase || 'STORY_AFTER_KITCHEN';
-                gameState.returnPhase = null;
-                gameState.isWaitingForInput = true;
-                broadcastRoomLog(roomId, "✅ 전투 종료! 무엇을 진행하시겠습니까?", "system-msg");
-                syncInputState(roomId, "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.");
-            } else if (gameState.location === '2층 안방') {
-                gameState.phase = 'STORY_AFTER_ROOM2F';
-                gameState.isMirrorGlitchActive = false; // 왜곡 해제
-                gameState.isWaitingForInput = true;
-                if (gameState.returnPhase === 'STORY_AFTER_ROOM2F') {
-                    broadcastRoomLog(roomId, "✅ 상황 종료!", "system-msg");
-                } else {
-                    broadcastRoomLog(roomId, "✅ 보스 처치!", "system-msg");
-                }
-                gameState.returnPhase = null;
-                syncInputState(roomId, "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
-            } else if (gameState.location === '지하실 입구') {
-                gameState.phase = 'STORY_AFTER_BASEMENT_ENTRANCE';
-                gameState.isWaitingForInput = true;
-                broadcastRoomLog(roomId, "✅ 거구의 악귀를 쓰러뜨렸습니다! 철문 너머로 깊은 지하실 본당이 보입니다.", "system-msg");
-                syncInputState(roomId, "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
-            } else if (gameState.location === '지하실 본당') {
-                // 최종 보스 태자귀 처치 시
-                gameState.phase = 'FINAL_ID_CHECK';
-                gameState.isWaitingForInput = false;
-                io.to(roomId).emit('darken_ui');
-                broadcastRoomLog(roomId, "🌑 태자귀가 비릿하게 웃으며 손을 뻗습니다. \"너희는 이 굴레에서 영원히 벗어나지 못한다.\"", "combat-msg");
-                setTimeout(() => {
-                    broadcastRoomLog(roomId, "🌑 주변의 풍경이 일그러지며 태자귀의 목소리가 메아리 칩니다. \"가엾구나. 사실 네 곁에는 아무도 없다. 그들은 모두 내가 만든 환영일 뿐이지.\"", "combat-msg");
+    // 워치독 갱신
+    setTurnWatchdog(roomId);
+
+    try {
+        const aliveEnemies = gameState.enemies.filter(e => e.hp > 0);
+        const hasCharmed = gameState.party.some(p => p.status.includes('매혹'));
+
+        if (aliveEnemies.length === 0) {
+            if (gameState.phase === 'COMBAT') {
+                // 워치독 해제 (전투 종료)
+                if (gameState._watchdogTimer) { clearTimeout(gameState._watchdogTimer); gameState._watchdogTimer = null; }
+                gameState.party.forEach(p => p.status = []);
+                gameState.turnOwner = null; // 전투 종료 시 턴 소유자 초기화
+                broadcastRoomState(roomId);
+                if (gameState.location === '1층 복도') {
+                    gameState.phase = 'STORY_AFTER_COMBAT';
+                    gameState.isWaitingForInput = true;
+                    broadcastRoomLog(roomId, "✅ 전투 종료! 앞을 가로막는 괴물이 모두 사라지고 건너편에는 주방이 보입니다. 주방으로 이동하시겠습니까?", "system-msg");
+                    syncInputState(roomId, "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                } else if (gameState.location === '1층 주방 (식당)') {
+                    gameState.phase = gameState.returnPhase || 'STORY_AFTER_KITCHEN';
+                    gameState.returnPhase = null;
+                    gameState.isWaitingForInput = true;
+                    broadcastRoomLog(roomId, "✅ 전투 종료! 무엇을 진행하시겠습니까?", "system-msg");
+                    syncInputState(roomId, "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.");
+                } else if (gameState.location === '2층 안방') {
+                    gameState.phase = 'STORY_AFTER_ROOM2F';
+                    gameState.isMirrorGlitchActive = false; // 왜곡 해제
+                    gameState.isWaitingForInput = true;
+                    if (gameState.returnPhase === 'STORY_AFTER_ROOM2F') {
+                        broadcastRoomLog(roomId, "✅ 상황 종료!", "system-msg");
+                    } else {
+                        broadcastRoomLog(roomId, "✅ 보스 처치!", "system-msg");
+                    }
+                    gameState.returnPhase = null;
+                    syncInputState(roomId, "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                } else if (gameState.location === '지하실 입구') {
+                    gameState.phase = 'STORY_AFTER_BASEMENT_ENTRANCE';
+                    gameState.isWaitingForInput = true;
+                    broadcastRoomLog(roomId, "✅ 거구의 악귀를 쓰러뜨렸습니다! 철문 너머로 깊은 지하실 본당이 보입니다.", "system-msg");
+                    syncInputState(roomId, "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                } else if (gameState.location === '지하실 본당') {
+                    // 최종 보스 태자귀 처치 시
+                    gameState.phase = 'FINAL_ID_CHECK';
+                    gameState.isWaitingForInput = false;
+                    io.to(roomId).emit('darken_ui');
+                    broadcastRoomLog(roomId, "🌑 태자귀가 비릿하게 웃으며 손을 뻗습니다. \"너희는 이 굴레에서 영원히 벗어나지 못한다.\"", "combat-msg");
                     setTimeout(() => {
-                        broadcastRoomLog(roomId, "🌑 \"그렇지 않다고 생각하나? 그렇다면 말해보거라 너가 지금까지 같이 해온 친구들의 이름과 너의 이름을\"", "combat-msg");
-                        const idList = gameState.clients.map(c => c.nickname).join(', ');
-                        syncInputState(roomId, `▶ 같이 진행해온 이들의 이름을 입력하세요. (예: ${idList})`);
-                        gameState.isWaitingForInput = true;
+                        broadcastRoomLog(roomId, "🌑 주변의 풍경이 일그러지며 태자귀의 목소리가 메아리 칩니다. \"가엾구나. 사실 네 곁에는 아무도 없다. 그들은 모두 내가 만든 환영일 뿐이지.\"", "combat-msg");
+                        setTimeout(() => {
+                            broadcastRoomLog(roomId, "🌑 \"그렇지 않다고 생각하나? 그렇다면 말해보거라 너가 지금까지 같이 해온 친구들의 이름과 너의 이름을\"", "combat-msg");
+                            const idList = gameState.clients.map(c => c.nickname).join(', ');
+                            syncInputState(roomId, `▶ 같이 진행해온 이들의 이름을 입력하세요. (예: ${idList})`);
+                            gameState.isWaitingForInput = true;
+                        }, 2500);
                     }, 2500);
-                }, 2500);
-            }
-        }
-        return;
-    }
-
-    let nextActor;
-    while (!nextActor && gameState.currentTurnIndex < gameState.turnQueue.length) {
-        let actor = gameState.turnQueue[gameState.currentTurnIndex];
-        nextActor = gameState.party.find(p => p.id === actor.id && p.hp > 0) || gameState.enemies.find(e => e.id === actor.id && e.hp > 0);
-        gameState.currentTurnIndex++;
-    }
-
-    // [태자귀 영창 기믹 체크]
-    if (aliveEnemies.some(e => e.name === '태자귀')) {
-        const boss = aliveEnemies.find(e => e.name === '태자귀');
-        const hpPercent = (boss.hp / boss.maxHp) * 100;
-
-        // 기믹 발동 조건 (70%, 50%, 25%, 5% 시점)
-        let triggerPhase = 0;
-        if (hpPercent <= 5 && boss.gimmickPhase < 4) triggerPhase = 4;
-        else if (hpPercent <= 25 && boss.gimmickPhase < 3) triggerPhase = 3;
-        else if (hpPercent <= 50 && boss.gimmickPhase < 2) triggerPhase = 2;
-        else if (hpPercent <= 70 && boss.gimmickPhase < 1) triggerPhase = 1;
-
-        if (triggerPhase > 0) {
-            boss.gimmickPhase = triggerPhase;
-            gameState.phase = 'INCANTATION';
-            gameState.incantationIndex = 0; // 현재 순서 (0~7)
-
-            const incantations = [
-                null,
-                "사불범정 만마항복", // 1단계
-                "금성철벽 천라지망", // 2단계
-                "파사현정 명경지수", // 3단계
-                "권선징악 인과응보"  // 4단계
-            ];
-            gameState.currentIncantation = incantations[triggerPhase].replace(/ /g, ''); // 공백 제거
-
-            let alertMsg = "";
-            if (triggerPhase === 1) alertMsg = "⚠️ 태자귀가 사악한 기운으로 덮치려고 합니다. 올바른 주문을 영창하여 기운을 막아야 합니다. 주문은 순서대로 외쳐야 합니다!";
-            else if (triggerPhase === 2) alertMsg = "⚠️ 태자귀의 힘이 약해지고 있습니다. 봉인 주문을 위한 주문을 영창 하십시오! 주문은 순서대로 외쳐야 합니다!";
-            else if (triggerPhase === 3) alertMsg = "⚠️ 태자귀가 환상을 걸어 혼란을 야기하려 합니다. 주문을 영창하여 혼란을 막아야 합니다. 주문은 순서대로 외쳐야 합니다!";
-            else if (triggerPhase === 4) alertMsg = "⚠️ 태자귀가 무력화 되어가고 있습니다. 영원한 소멸을 위해 주문을 영창 하십시오! 주문은 순서대로 외쳐야 합니다!";
-
-            broadcastRoomLog(roomId, alertMsg, "system-msg");
-            broadcastRoomLog(roomId, "📢 순서: **[천화]** -> **[강림]** -> **[연화]** -> **[요한]**", "guide-msg");
-
-            // 영창 모드 전용 턴 시작
-            startIncantationTurn(roomId);
-            return;
-        }
-    }
-
-    if (!nextActor) { startCombatCycle(roomId); return; }
-
-    gameState.turnOwner = nextActor;
-    broadcastRoomState(roomId);
-
-    if (gameState.party.find(p => p.id === nextActor.id)) {
-        if (nextActor.status.includes('기절')) {
-            broadcastRoomLog(roomId, `💤 ${nextActor.name}이 기절하여 턴을 넘깁니다...`, "combat-msg");
-            nextActor.status = nextActor.status.filter(s => s !== '기절');
-            broadcastRoomState(roomId);
-            setTimeout(() => nextTurn(roomId), 1500);
-            return;
-        }
-        if (nextActor.status.includes('매혹') || nextActor.status.includes('혼란')) {
-            setTimeout(() => {
-                const targets = gameState.party.filter(p => p.hp > 0);
-                const t = targets[Math.floor(Math.random() * targets.length)];
-                const dmg = Math.floor(Math.random() * 10) + 15;
-                t.hp = Math.max(0, t.hp - dmg);
-                broadcastRoomLog(roomId, `🌀 ${nextActor.name}이 환각 속에 아군 ${t.name}을 공격! (-${dmg})`, "combat-msg");
-                if (nextActor.status.includes('혼란')) {
-                    nextActor.status = nextActor.status.filter(s => s !== '혼란');
-                    broadcastRoomLog(roomId, `💡 충격으로 ${nextActor.name}의 혼란이 풀렸습니다!`);
                 }
-                broadcastRoomState(roomId);
-                setTimeout(() => nextTurn(roomId), 1500);
-            }, 1000);
+            }
             return;
         }
-        if (nextActor.status.includes('공포')) {
-            nextActor.fearTurns = (nextActor.fearTurns || 0) + 1;
-            if (nextActor.fearTurns >= 3) {
-                nextActor.status = nextActor.status.filter(s => s !== '공포');
-                nextActor.fearTurns = 0;
-                broadcastRoomLog(roomId, `💡 ${nextActor.name}이 공포를 극복하고 정신을 차렸습니다!`, "system-msg");
-            } else {
-                broadcastRoomLog(roomId, `😨 ${nextActor.name}이 공포에 질려 아무것도 할 수 없습니다... (${nextActor.fearTurns}/3턴)`, "combat-msg");
-                broadcastRoomState(roomId);
-                setTimeout(() => nextTurn(roomId), 1500);
+
+        let nextActor;
+        while (!nextActor && gameState.currentTurnIndex < gameState.turnQueue.length) {
+            let actor = gameState.turnQueue[gameState.currentTurnIndex];
+            nextActor = gameState.party.find(p => p.id === actor.id && p.hp > 0) || gameState.enemies.find(e => e.id === actor.id && e.hp > 0);
+            gameState.currentTurnIndex++;
+        }
+
+        // [태자귀 영창 기믹 체크]
+        if (aliveEnemies.some(e => e.name === '태자귀')) {
+            const boss = aliveEnemies.find(e => e.name === '태자귀');
+            const hpPercent = (boss.hp / boss.maxHp) * 100;
+
+            // 기믹 발동 조건 (70%, 50%, 25%, 5% 시점)
+            let triggerPhase = 0;
+            if (hpPercent <= 5 && boss.gimmickPhase < 4) triggerPhase = 4;
+            else if (hpPercent <= 25 && boss.gimmickPhase < 3) triggerPhase = 3;
+            else if (hpPercent <= 50 && boss.gimmickPhase < 2) triggerPhase = 2;
+            else if (hpPercent <= 70 && boss.gimmickPhase < 1) triggerPhase = 1;
+
+            if (triggerPhase > 0) {
+                boss.gimmickPhase = triggerPhase;
+                gameState.phase = 'INCANTATION';
+                gameState.incantationIndex = 0; // 현재 순서 (0~7)
+
+                const incantations = [
+                    null,
+                    "사불범정 만마항복", // 1단계
+                    "금성철벽 천라지망", // 2단계
+                    "파사현정 명경지수", // 3단계
+                    "권선징악 인과응보"  // 4단계
+                ];
+                gameState.currentIncantation = incantations[triggerPhase].replace(/ /g, ''); // 공백 제거
+
+                let alertMsg = "";
+                if (triggerPhase === 1) alertMsg = "⚠️ 태자귀가 사악한 기운으로 덮치려고 합니다. 올바른 주문을 영창하여 기운을 막아야 합니다. 주문은 순서대로 외쳐야 합니다!";
+                else if (triggerPhase === 2) alertMsg = "⚠️ 태자귀의 힘이 약해지고 있습니다. 봉인 주문을 위한 주문을 영창 하십시오! 주문은 순서대로 외쳐야 합니다!";
+                else if (triggerPhase === 3) alertMsg = "⚠️ 태자귀가 환상을 걸어 혼란을 야기하려 합니다. 주문을 영창하여 혼란을 막아야 합니다. 주문은 순서대로 외쳐야 합니다!";
+                else if (triggerPhase === 4) alertMsg = "⚠️ 태자귀가 무력화 되어가고 있습니다. 영원한 소멸을 위해 주문을 영창 하십시오! 주문은 순서대로 외쳐야 합니다!";
+
+                broadcastRoomLog(roomId, alertMsg, "system-msg");
+                broadcastRoomLog(roomId, "📢 순서: **[천화]** -> **[강림]** -> **[연화]** -> **[요한]**", "guide-msg");
+
+                // 영창 모드 전용 턴 시작
+                startIncantationTurn(roomId);
                 return;
             }
         }
 
-        if (nextActor.mp < (nextActor.maxMp || 100)) {
-            nextActor.mp = Math.min(nextActor.maxMp || 100, nextActor.mp + 3);
-            broadcastRoomLog(roomId, `🍀 ${nextActor.name}의 MP가 자연적으로 회복됩니다. (+3)`, "guide-msg");
-        }
+        if (!nextActor) { startCombatCycle(roomId); return; }
 
-        gameState.isWaitingForInput = true;
-        // syncInputState가 broadcastRoomState 내부에 포함되어 있으나, 명시적으로 우선 호출하여 딜레이 방지
-        syncInputState(roomId);
+        gameState.turnOwner = nextActor;
         broadcastRoomState(roomId);
-        broadcastRoomLog(roomId, `[턴] ${nextActor.name}의 차례입니다.`, "system-msg");
-    } else {
-        if (nextActor.status.includes('기절')) {
-            broadcastRoomLog(roomId, `💤 ${nextActor.name}이 기절하여 움직이지 못합니다.`, "combat-msg");
-            nextActor.status = nextActor.status.filter(s => s !== '기절');
-            // 수문장 거대 공격 저지 로직
-            if (nextActor.name === '머리 없는 거구의 악귀' && nextActor.isCharging) {
-                nextActor.isCharging = false;
-                nextActor.chargeCount = 0;
-                broadcastRoomLog(roomId, `✨ **저지 성공!** ${nextActor.name}의 거대 공격이 무산되었습니다!`, "heal-msg");
+
+        if (gameState.party.find(p => p.id === nextActor.id)) {
+            if (nextActor.status.includes('기절')) {
+                broadcastRoomLog(roomId, `💤 ${nextActor.name}이 기절하여 턴을 넘깁니다...`, "combat-msg");
+                nextActor.status = nextActor.status.filter(s => s !== '기절');
+                broadcastRoomState(roomId);
+                safeNextTurn(roomId, 1500);
+                return;
             }
-            setTimeout(() => nextTurn(roomId), 1500);
-            return;
+            if (nextActor.status.includes('매혹') || nextActor.status.includes('혼란')) {
+                setTimeout(() => {
+                    try {
+                        const targets = gameState.party.filter(p => p.hp > 0);
+                        const t = targets[Math.floor(Math.random() * targets.length)];
+                        const dmg = Math.floor(Math.random() * 10) + 15;
+                        t.hp = Math.max(0, t.hp - dmg);
+                        broadcastRoomLog(roomId, `🌀 ${nextActor.name}이 환각 속에 아군 ${t.name}을 공격! (-${dmg})`, "combat-msg");
+                        if (nextActor.status.includes('혼란')) {
+                            nextActor.status = nextActor.status.filter(s => s !== '혼란');
+                            broadcastRoomLog(roomId, `💡 충격으로 ${nextActor.name}의 혼란이 풀렸습니다!`);
+                        }
+                        broadcastRoomState(roomId);
+                        safeNextTurn(roomId, 1500);
+                    } catch (e) {
+                        console.error('[매혹/혼란 처리 에러]', e);
+                        safeNextTurn(roomId, 1500);
+                    }
+                }, 1000);
+                return;
+            }
+            if (nextActor.status.includes('공포')) {
+                nextActor.fearTurns = (nextActor.fearTurns || 0) + 1;
+                if (nextActor.fearTurns >= 3) {
+                    nextActor.status = nextActor.status.filter(s => s !== '공포');
+                    nextActor.fearTurns = 0;
+                    broadcastRoomLog(roomId, `💡 ${nextActor.name}이 공포를 극복하고 정신을 차렸습니다!`, "system-msg");
+                } else {
+                    broadcastRoomLog(roomId, `😨 ${nextActor.name}이 공포에 질려 아무것도 할 수 없습니다... (${nextActor.fearTurns}/3턴)`, "combat-msg");
+                    broadcastRoomState(roomId);
+                    safeNextTurn(roomId, 1500);
+                    return;
+                }
+            }
+
+            if (nextActor.mp < (nextActor.maxMp || 100)) {
+                nextActor.mp = Math.min(nextActor.maxMp || 100, nextActor.mp + 3);
+                broadcastRoomLog(roomId, `🍀 ${nextActor.name}의 MP가 자연적으로 회복됩니다. (+3)`, "guide-msg");
+            }
+
+            gameState.isWaitingForInput = true;
+            // syncInputState가 broadcastRoomState 내부에 포함되어 있으나, 명시적으로 우선 호출하여 딜레이 방지
+            syncInputState(roomId);
+            broadcastRoomState(roomId);
+            broadcastRoomLog(roomId, `[턴] ${nextActor.name}의 차례입니다.`, "system-msg");
+        } else {
+            if (nextActor.status.includes('기절')) {
+                broadcastRoomLog(roomId, `💤 ${nextActor.name}이 기절하여 움직이지 못합니다.`, "combat-msg");
+                nextActor.status = nextActor.status.filter(s => s !== '기절');
+                // 수문장 거대 공격 저지 로직
+                if (nextActor.name === '머리 없는 거구의 악귀' && nextActor.isCharging) {
+                    nextActor.isCharging = false;
+                    nextActor.chargeCount = 0;
+                    broadcastRoomLog(roomId, `✨ **저지 성공!** ${nextActor.name}의 거대 공격이 무산되었습니다!`, "heal-msg");
+                }
+                safeNextTurn(roomId, 1500);
+                return;
+            }
+            setTimeout(() => {
+                try {
+                    enemyAction(roomId, nextActor);
+                } catch (e) {
+                    console.error('[enemyAction 호출 에러]', e);
+                    safeNextTurn(roomId, 1500);
+                }
+            }, 1500);
         }
-        setTimeout(() => enemyAction(roomId, nextActor), 1500);
+    } catch (e) {
+        console.error('[nextTurn 에러]', e);
+        // 에러 발생 시 턴 큐 재초기화로 복구 시도
+        try { startCombatCycle(roomId); } catch (e2) {
+            console.error('[nextTurn 복구 실패]', e2);
+            if (rooms[roomId]) {
+                rooms[roomId].isWaitingForInput = true;
+                syncInputState(roomId);
+            }
+        }
     }
 }
 
 function enemyAction(roomId, enemy) {
     const gameState = rooms[roomId];
     if (!gameState) return;
-    const alive = gameState.party.filter(p => p.hp > 0);
-    if (alive.length === 0) return;
+    try {
+        const alive = gameState.party.filter(p => p.hp > 0);
+        if (alive.length === 0) return;
 
-    // 도발 타겟팅: 도발 중인 아군이 있으면 우선 타격
-    const taanters = alive.filter(p => p.status.includes('도발방어'));
-    const defaultTarget = taanters.length > 0 ? taanters[Math.floor(Math.random() * taanters.length)] : alive[Math.floor(Math.random() * alive.length)];
+        // 도발 타겟팅: 도발 중인 아군이 있으면 우선 타격
+        const taanters = alive.filter(p => p.status.includes('도발방어'));
+        const defaultTarget = taanters.length > 0 ? taanters[Math.floor(Math.random() * taanters.length)] : alive[Math.floor(Math.random() * alive.length)];
 
-    // 피해 감소 계산 헬퍼 (task 38: 보스 스킬 등 특정 상황에서 방어 무시)
-    const calcDmg = (baseDmg, target, ignoreDefense = false) => {
-        if (ignoreDefense) return baseDmg;
-        let dmg = baseDmg;
-        if (target.status.includes('방어')) dmg = Math.floor(dmg * 0.5);
-        if (target.status.includes('도발방어')) dmg = Math.floor(dmg * 0.3);
-        if (gameState.coatBonusPlayerId === target.id) dmg = Math.max(1, dmg - 4);
-        return dmg;
-    };
+        // 피해 감소 계산 헬퍼 (task 38: 보스 스킬 등 특정 상황에서 방어 무시)
+        const calcDmg = (baseDmg, target, ignoreDefense = false) => {
+            if (ignoreDefense) return baseDmg;
+            let dmg = baseDmg;
+            if (target.status.includes('방어')) dmg = Math.floor(dmg * 0.5);
+            if (target.status.includes('도발방어')) dmg = Math.floor(dmg * 0.3);
+            if (gameState.coatBonusPlayerId === target.id) dmg = Math.max(1, dmg - 4);
+            return dmg;
+        };
 
-    if (enemy.name === '굶주린 폴터가이스트') {
-        broadcastRoomLog(roomId, `👻 ${enemy.name}가 주방의 온갖 사물들을 조종하여 일제히 투척합니다!`, "combat-msg");
-        alive.forEach(t => {
-            let dmg = calcDmg(Math.floor(Math.random() * 8) + 8, t);
-            t.hp = Math.max(0, t.hp - dmg);
-            broadcastRoomLog(roomId, `💥 날아온 집기가 ${t.name}에게 적중! (-${dmg})`, "combat-msg");
-        });
-    } else if (enemy.name === '몽마') {
-        const t = defaultTarget;
-        const rand = Math.random();
-        if (rand < 0.45) { // 빈도 45%
-            if (Math.random() < 0.8) { // 확률 80%
-                t.status.push('기절');
-                broadcastRoomLog(roomId, `🌀 ${enemy.name}가 방어할 수 없는 정신 공격으로 ${t.name}을 가둡니다! (기절)`, "combat-msg");
-            } else {
-                broadcastRoomLog(roomId, `🌀 ${enemy.name}의 정신 공격을 ${t.name}이 간신히 버텨냈습니다!`, "combat-msg");
-            }
-        } else if (rand < 0.9) { // 빈도 45%
-            if (Math.random() < 0.8) { // 확률 80%
-                t.status.push('공포');
-                t.fearTurns = 0;
-                broadcastRoomLog(roomId, `😨 ${enemy.name}가 영혼을 얼려버리는 환각을 보여줍니다! (공포)`, "combat-msg");
-            } else {
-                broadcastRoomLog(roomId, `😰 ${enemy.name}가 보여준 공포를 ${t.name}이 정신력으로 이겨냈습니다!`, "combat-msg");
-            }
-        } else { // 빈도 10%
-            let dmg = calcDmg(Math.floor(Math.random() * 15) + 10, t, true);
-            t.hp = Math.max(0, t.hp - dmg);
-            broadcastRoomLog(roomId, `🌑 ${enemy.name}가 ${t.name}의 생명력을 강제로 빨아들입니다! (-${dmg})`, "combat-msg");
-            if (Math.random() < 0.33) { // 33% 확률로 회복
-                const healAmt = Math.floor(enemy.maxHp * 0.33);
-                enemy.hp = Math.min(enemy.maxHp, enemy.hp + healAmt);
-                broadcastRoomLog(roomId, `💉 ${enemy.name}가 빼앗은 생명력으로 자신의 상처를 치유합니다! (+${healAmt} HP)`, "heal-msg");
-            }
-        }
-    } else if (enemy.name === '미혹귀') {
-        const charmTargets = alive.filter(p => !p.status.includes('매혹'));
-        if (charmTargets.length === 0) { // 모두 매혹 상태면 그냥 대기 타겟 공격 (하지만 미혹귀는 이제 매혹만 쓰므로 로그만)
-            broadcastRoomLog(roomId, `💖 ${enemy.name}가 공허한 눈길로 이미 타락한 파티원들을 바라보며 비웃습니다.`, "combat-msg");
-        } else {
-            const isDouble = Math.random() < 0.15; // 15% 확률로 2명
-            const actualTargets = isDouble && charmTargets.length >= 2 ? charmTargets.sort(() => 0.5 - Math.random()).slice(0, 2) : [charmTargets[Math.floor(Math.random() * charmTargets.length)]];
-
-            actualTargets.forEach(t => {
-                if (Math.random() < 0.66 && t.job !== '사제가 아님' && t.job !== '사제') { // 66% 확률
-                    t.status.push('매혹');
-                    broadcastRoomLog(roomId, `💖 ${enemy.name}의 원념이 섞인 울음이 ${t.name}을 지배합니다! (매혹)`, "combat-msg");
-                } else if (t.job === '사제') {
-                    broadcastRoomLog(roomId, `✨ ${t.name}은 성수로 무장한 신성한 기운으로 ${enemy.name}의 유혹을 물리칩니다!`, "guide-msg");
-                } else {
-                    broadcastRoomLog(roomId, `💨 ${enemy.name}의 울음소리가 공허하게 울려 퍼집니다...`, "combat-msg");
-                }
-            });
-        }
-    } else if (enemy.name === '머리 없는 거구의 악귀') {
-        if (enemy.isCharging) {
-            broadcastRoomLog(roomId, `🪓 ${enemy.name}가 치켜든 거대한 도끼를 지면으로 강하게 내리찍습니다!!`, "combat-msg");
+        if (enemy.name === '굶주린 폴터가이스트') {
+            broadcastRoomLog(roomId, `👻 ${enemy.name}가 주방의 온갖 사물들을 조종하여 일제히 투척합니다!`, "combat-msg");
             alive.forEach(t => {
-                let baseDmg = Math.floor(Math.random() * 41) + 40; // 40-80
-                let finalDmg = baseDmg;
-                if (t.status.includes('방어')) {
-                    finalDmg = Math.floor(baseDmg * 0.2); // 방어 시 80% 감소
-                    broadcastRoomLog(roomId, `🛡️ ${t.name}이(가) 방어로 충격을 견뎌냅니다! (-${finalDmg})`, "combat-msg");
-                    t.status = t.status.filter(s => s !== '방어');
-                } else {
-                    broadcastRoomLog(roomId, `💥 ${t.name}이(가) 엄청난 충격에 휩싸입니다! (-${finalDmg})`, "combat-msg");
-                }
-                t.hp = Math.max(0, t.hp - finalDmg);
+                let dmg = calcDmg(Math.floor(Math.random() * 8) + 8, t);
+                t.hp = Math.max(0, t.hp - dmg);
+                broadcastRoomLog(roomId, `💥 날아온 집기가 ${t.name}에게 적중! (-${dmg})`, "combat-msg");
             });
-            enemy.isCharging = false;
-            enemy.chargeCount = 0;
-        } else {
-            enemy.chargeCount = (enemy.chargeCount || 0) + 1;
-            if (enemy.chargeCount >= 2) { // 2턴 차징 (기존 3턴)
-                enemy.isCharging = true;
-                broadcastRoomLog(roomId, `⚠️ **위기**: ${enemy.name}가 거대한 도끼를 높이 치켜듭니다!`, "combat-msg");
-                broadcastRoomLog(roomId, "다음 턴에 강력한 공격이 예상됩니다!", "guide-msg");
-            } else {
-                let dmg = Math.floor(Math.random() * 21) + 20; // 방어 무시 (20-40)
-                defaultTarget.hp = Math.max(0, defaultTarget.hp - dmg);
-                broadcastRoomLog(roomId, `🔨 ${enemy.name}가 무거운 도끼 자루로 ${defaultTarget.name}을 후려칩니다! (-${dmg})`, "combat-msg");
-                if (Math.random() < 0.33) {
-                    defaultTarget.status.push('기절');
-                    broadcastRoomLog(roomId, `💫 ${enemy.name}의 육중한 타격에 ${defaultTarget.name}이 정신을 잃습니다! (기절)`, "combat-msg");
+        } else if (enemy.name === '몽마') {
+            const t = defaultTarget;
+            const rand = Math.random();
+            if (rand < 0.45) { // 빈도 45%
+                if (Math.random() < 0.8) { // 확률 80%
+                    t.status.push('기절');
+                    broadcastRoomLog(roomId, `🌀 ${enemy.name}가 방어할 수 없는 정신 공격으로 ${t.name}을 가둡니다! (기절)`, "combat-msg");
+                } else {
+                    broadcastRoomLog(roomId, `🌀 ${enemy.name}의 정신 공격을 ${t.name}이 간신히 버텨냈습니다!`, "combat-msg");
+                }
+            } else if (rand < 0.9) { // 빈도 45%
+                if (Math.random() < 0.8) { // 확률 80%
+                    t.status.push('공포');
+                    t.fearTurns = 0;
+                    broadcastRoomLog(roomId, `😨 ${enemy.name}가 영혼을 얼려버리는 환각을 보여줍니다! (공포)`, "combat-msg");
+                } else {
+                    broadcastRoomLog(roomId, `😰 ${enemy.name}가 보여준 공포를 ${t.name}이 정신력으로 이겨냈습니다!`, "combat-msg");
+                }
+            } else { // 빈도 10%
+                let dmg = calcDmg(Math.floor(Math.random() * 15) + 10, t, true);
+                t.hp = Math.max(0, t.hp - dmg);
+                broadcastRoomLog(roomId, `🌑 ${enemy.name}가 ${t.name}의 생명력을 강제로 빨아들입니다! (-${dmg})`, "combat-msg");
+                if (Math.random() < 0.33) { // 33% 확률로 회복
+                    const healAmt = Math.floor(enemy.maxHp * 0.33);
+                    enemy.hp = Math.min(enemy.maxHp, enemy.hp + healAmt);
+                    broadcastRoomLog(roomId, `💉 ${enemy.name}가 빼앗은 생명력으로 자신의 상처를 치유합니다! (+${healAmt} HP)`, "heal-msg");
                 }
             }
-        }
-    } else if (enemy.name === '태자귀') {
-        const targets = alive.sort(() => 0.5 - Math.random()).slice(0, 2);
-        targets.forEach(t => {
-            let dmg = calcDmg(Math.floor(Math.random() * 4) + 7, t); // 7-10 대미지
+        } else if (enemy.name === '미혹귀') {
+            const charmTargets = alive.filter(p => !p.status.includes('매혹'));
+            if (charmTargets.length === 0) { // 모두 매혹 상태면 그냥 대기 타겟 공격 (하지만 미혹귀는 이제 매혹만 쓰므로 로그만)
+                broadcastRoomLog(roomId, `💖 ${enemy.name}가 공허한 눈길로 이미 타락한 파티원들을 바라보며 비웃습니다.`, "combat-msg");
+            } else {
+                const isDouble = Math.random() < 0.15; // 15% 확률로 2명
+                const actualTargets = isDouble && charmTargets.length >= 2 ? charmTargets.sort(() => 0.5 - Math.random()).slice(0, 2) : [charmTargets[Math.floor(Math.random() * charmTargets.length)]];
+
+                actualTargets.forEach(t => {
+                    if (Math.random() < 0.66 && t.job !== '사제가 아님' && t.job !== '사제') { // 66% 확률
+                        t.status.push('매혹');
+                        broadcastRoomLog(roomId, `💖 ${enemy.name}의 원념이 섞인 울음이 ${t.name}을 지배합니다! (매혹)`, "combat-msg");
+                    } else if (t.job === '사제') {
+                        broadcastRoomLog(roomId, `✨ ${t.name}은 성수로 무장한 신성한 기운으로 ${enemy.name}의 유혹을 물리칩니다!`, "guide-msg");
+                    } else {
+                        broadcastRoomLog(roomId, `💨 ${enemy.name}의 울음소리가 공허하게 울려 퍼집니다...`, "combat-msg");
+                    }
+                });
+            }
+        } else if (enemy.name === '머리 없는 거구의 악귀') {
+            if (enemy.isCharging) {
+                broadcastRoomLog(roomId, `🪓 ${enemy.name}가 치켜든 거대한 도끼를 지면으로 강하게 내리찍습니다!!`, "combat-msg");
+                alive.forEach(t => {
+                    let baseDmg = Math.floor(Math.random() * 41) + 40; // 40-80
+                    let finalDmg = baseDmg;
+                    if (t.status.includes('방어')) {
+                        finalDmg = Math.floor(baseDmg * 0.2); // 방어 시 80% 감소
+                        broadcastRoomLog(roomId, `🛡️ ${t.name}이(가) 방어로 충격을 견뎌냅니다! (-${finalDmg})`, "combat-msg");
+                        t.status = t.status.filter(s => s !== '방어');
+                    } else {
+                        broadcastRoomLog(roomId, `💥 ${t.name}이(가) 엄청난 충격에 휩싸입니다! (-${finalDmg})`, "combat-msg");
+                    }
+                    t.hp = Math.max(0, t.hp - finalDmg);
+                });
+                enemy.isCharging = false;
+                enemy.chargeCount = 0;
+            } else {
+                enemy.chargeCount = (enemy.chargeCount || 0) + 1;
+                if (enemy.chargeCount >= 2) { // 2턴 차징 (기존 3턴)
+                    enemy.isCharging = true;
+                    broadcastRoomLog(roomId, `⚠️ **위기**: ${enemy.name}가 거대한 도끼를 높이 치켜듭니다!`, "combat-msg");
+                    broadcastRoomLog(roomId, "다음 턴에 강력한 공격이 예상됩니다!", "guide-msg");
+                } else {
+                    let dmg = Math.floor(Math.random() * 21) + 20; // 방어 무시 (20-40)
+                    defaultTarget.hp = Math.max(0, defaultTarget.hp - dmg);
+                    broadcastRoomLog(roomId, `🔨 ${enemy.name}가 무거운 도끼 자루로 ${defaultTarget.name}을 후려칩니다! (-${dmg})`, "combat-msg");
+                    if (Math.random() < 0.33) {
+                        defaultTarget.status.push('기절');
+                        broadcastRoomLog(roomId, `💫 ${enemy.name}의 육중한 타격에 ${defaultTarget.name}이 정신을 잃습니다! (기절)`, "combat-msg");
+                    }
+                }
+            }
+        } else if (enemy.name === '태자귀') {
+            const targets = alive.sort(() => 0.5 - Math.random()).slice(0, 2);
+            targets.forEach(t => {
+                let dmg = calcDmg(Math.floor(Math.random() * 4) + 7, t); // 7-10 대미지
+                t.hp = Math.max(0, t.hp - dmg);
+                broadcastRoomLog(roomId, `💀 태자귀의 비릿한 기운이 ${t.name}을 덮칩니다! (-${dmg})`, "combat-msg");
+            });
+        } else if (alive.length > 0) {
+            const t = defaultTarget;
+            let dmg = calcDmg(Math.floor(Math.random() * 10) + 5, t);
             t.hp = Math.max(0, t.hp - dmg);
-            broadcastRoomLog(roomId, `💀 태자귀의 비릿한 기운이 ${t.name}을 덮칩니다! (-${dmg})`, "combat-msg");
-        });
-    } else if (alive.length > 0) {
-        const t = defaultTarget;
-        let dmg = calcDmg(Math.floor(Math.random() * 10) + 5, t);
-        t.hp = Math.max(0, t.hp - dmg);
-        broadcastRoomLog(roomId, `👻 ${enemy.name}의 공격! ${t.name}에게 ${dmg} 피해!`, "combat-msg");
-    }
-    broadcastRoomState(roomId);
-    if (gameState.party.every(p => p.hp <= 0)) {
-        gameState.phase = 'GAMEOVER';
-        broadcastRoomLog(roomId, "☠️ 전멸했습니다.", "system-msg");
-    } else {
-        setTimeout(() => nextTurn(roomId), 1500);
+            broadcastRoomLog(roomId, `👻 ${enemy.name}의 공격! ${t.name}에게 ${dmg} 피해!`, "combat-msg");
+        }
+        broadcastRoomState(roomId);
+        if (gameState.party.every(p => p.hp <= 0)) {
+            gameState.phase = 'GAMEOVER';
+            broadcastRoomLog(roomId, "☠️ 전멸했습니다.", "system-msg");
+        } else {
+            safeNextTurn(roomId, 1500);
+        }
+    } catch (e) {
+        console.error('[enemyAction 에러]', e);
+        safeNextTurn(roomId, 1500);
     }
 }
 
@@ -1612,7 +1703,7 @@ function executePlayerAction(roomId, actor, cmd, socket) {
         if (cmd.action === 'SEARCH') {
             if (!cmd.target || cmd.target === 'NONE' || cmd.target.trim() === '') {
                 broadcastRoomLog(roomId, "무엇을 탐색할 지 몰라 허둥지둥 댑니다. (둘러보기를 사용하여 무엇을 탐색할지 찾아보세요)", "guide-msg");
-                setTimeout(() => nextTurn(roomId), 1000);
+                safeNextTurn(roomId, 1000);
                 return;
             }
             if (cmd.target === gs.poltergeistState.hiddenSpot) {
@@ -1624,7 +1715,7 @@ function executePlayerAction(roomId, actor, cmd, socket) {
             } else {
                 broadcastRoomLog(roomId, `💨 **[${cmd.target}]**에는 아무것도 없었습니다...`, "combat-msg");
             }
-            setTimeout(() => nextTurn(roomId), 1000);
+            safeNextTurn(roomId, 1000);
             return;
         }
     }
@@ -1643,7 +1734,7 @@ function executePlayerAction(roomId, actor, cmd, socket) {
             } else {
                 broadcastRoomLog(roomId, "무엇을 탐색할 지 몰라 허둥지둥 댑니다. 무언가를 탐색 해야합니다.", "guide-msg");
             }
-            setTimeout(() => nextTurn(roomId), 1000);
+            safeNextTurn(roomId, 1000);
             return;
         }
     }
@@ -1756,7 +1847,7 @@ function executePlayerAction(roomId, actor, cmd, socket) {
             }
             if (t.status.includes('은신')) {
                 broadcastRoomLog(roomId, `❌ 은신 중인 **[${t.name}]**을(를) 찾지 못해 기술이 허공을 가릅니다!`, "combat-msg");
-                setTimeout(() => nextTurn(roomId), 1000);
+                safeNextTurn(roomId, 1000);
                 return;
             }
             let dmg = 45;
@@ -1778,7 +1869,7 @@ function executePlayerAction(roomId, actor, cmd, socket) {
             }
             if (t.status.includes('은신')) {
                 broadcastRoomLog(roomId, `❌ 은신 중인 **[${t.name}]**에게 혼령을 보냈으나 실체를 찾지 못했습니다!`, "combat-msg");
-                setTimeout(() => nextTurn(roomId), 1000);
+                safeNextTurn(roomId, 1000);
                 return;
             }
             t.status.push('기절');
@@ -1835,7 +1926,7 @@ function executePlayerAction(roomId, actor, cmd, socket) {
         }
     }
 
-    setTimeout(() => nextTurn(roomId), 1000);
+    safeNextTurn(roomId, 1000);
 }
 
 const PORT = process.env.PORT || 3000;
