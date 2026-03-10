@@ -546,7 +546,7 @@ io.on('connection', (socket) => {
 
                 if (gameState.completedIndices.includes(correctIndex)) {
                     broadcastRoomLog(roomId, `‼️ **이미 외친 글자입니다!** (${trimmed})`, "combat-msg");
-                    // 실패 처리로 이어짐
+                    // 실패 처리로 이어지도록 gameState.completedIndices를 초기화하지 않고 통과
                 } else {
                     broadcastRoomLog(roomId, `✨ **정확합니다!** ${owner.name}의 외침이 공명합니다. (${trimmed})`, "heal-msg");
                     gameState.completedIndices.push(correctIndex);
@@ -559,7 +559,8 @@ io.on('connection', (socket) => {
                         boss.status.push('기절');
                         broadcastRoomLog(roomId, "✨ **영창 성공!** 강력한 신성력이 태자귀를 억누릅니다! (2턴 간 기절)", "heal-msg");
                         gameState.completedIndices = [];
-                        setTimeout(() => nextTurn(roomId), 1500);
+                        io.to(roomId).emit('turn_wait');
+                        setTimeout(() => startCombatCycle(roomId), 1500);
                     } else {
                         // 다음 무작위 턴 가동
                         setTimeout(() => startIncantationTurn(roomId), 1000);
@@ -589,7 +590,10 @@ io.on('connection', (socket) => {
             boss.gimmickPhase = Math.max(0, boss.gimmickPhase - 1);
 
             broadcastRoomState(roomId);
-            setTimeout(() => nextTurn(roomId), 1500);
+            io.to(roomId).emit('turn_wait');
+            setTimeout(() => {
+                startCombatCycle(roomId);
+            }, 1500);
             return;
         }
 
@@ -1695,6 +1699,23 @@ function executePlayerAction(roomId, actor, cmd, socket) {
         t.hp = Math.max(0, t.hp - dmg);
     } else if (cmd.action === 'SKILL') {
         const SKILL_COSTS = { '징치기': 10, '사인검베기': 15, '혼령묶기': 20, '성수뿌리기': 15 };
+
+        // [직업별 스킬 제한] (task 106)
+        const SKILL_JOB_MAP = {
+            '징치기': '무당',       // 천화 전용
+            '사인검베기': '퇴마사',  // 강림 전용
+            '혼령묶기': '영매',    // 연화 전용
+            '성수뿌리기': '사제'   // 요한 전용
+        };
+        const requiredJob = SKILL_JOB_MAP[cmd.skillName];
+        if (requiredJob && actor.job !== requiredJob) {
+            gs.isWaitingForInput = true;
+            const JOB_NAME_MAP = { '무당': '천화', '퇴마사': '강림', '영매': '연화', '사제': '요한' };
+            socket.emit('game_error', `${cmd.skillName}은(는) ${JOB_NAME_MAP[requiredJob] || requiredJob} 전용 스킬입니다!`);
+            io.to(roomId).emit('turn_start', actor);
+            return;
+        }
+
         const cost = SKILL_COSTS[cmd.skillName] || 0;
         if (actor.mp < cost) {
             gs.isWaitingForInput = true;
