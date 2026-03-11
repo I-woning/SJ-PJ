@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>텍스트 MUD - 언노운 파노라마</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="lobby.css">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700&family=Noto+Sans+KR:wght@300;400;700&display=swap"
+    rel="stylesheet">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+
+<body>
+  <div class="app-container" id="game-app">
+    <div id="dark-overlay"
+      style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:black; z-index:9999; opacity:0; transition: opacity 2s;">
+    </div>
+
+    <!-- 왼쪽 화면: 로비 / 대기실 뷰 -->
+    <div id="lobby-view" class="lobby-view">
+      <div class="lobby-box">
+
+        <!-- STEP 1: 닉네임 입력 -->
+        <div id="step-nickname">
+          <h1>오컬트 조사단</h1>
+          <p>요원님의 식별 코드(닉네임)를 입력해 주십시오.</p>
+          <div class="lobby-form">
+            <input type="text" id="player-name" placeholder="닉네임 입력 (예: 홍길동)" />
+            <button id="btn-submit-name">접속하기</button>
+          </div>
+        </div>
+
+        <!-- STEP 1.5: 방 생성 / 참가 선택 -->
+        <div id="step-room-choice" style="display:none;">
+          <h1>작전 구역 선택</h1>
+          <p>새로운 작전을 개시하거나, 기존 작전에 합류하십시오.</p>
+          <div class="lobby-form" style="flex-direction: column; gap: 10px;">
+            <div style="display:flex; gap:10px; width:100%;">
+              <input type="text" id="room-id-input" placeholder="방ID 입력 (생성 시 생략 가능)" style="flex:1;" />
+            </div>
+            <div style="display:flex; gap:10px; width:100%;">
+              <button id="btn-create-room" style="flex:1; background: #442;">방 생성 (새 작전)</button>
+              <button id="btn-join-room" style="flex:1; background: #244;">방 참가 (난입)</button>
+            </div>
+          </div>
+          <div class="room-list-container" style="margin-top:20px; text-align:left;">
+            <h3>활성화된 작전 구역</h3>
+            <ul id="active-room-list" style="list-style:none; padding:0; font-size:0.9rem; color:#aaa;">
+              <!-- 활성 방 목록 표시 -->
+            </ul>
+          </div>
+          <!-- 세이브 코드 로드 섹션 -->
+          <div class="save-load-container" style="margin-top:20px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.2);">
+            <h3 style="font-size: 0.9rem; color: #da0; margin-bottom: 5px;">💾 세이브 코드로 복구</h3>
+            <p style="font-size: 0.75rem; color: #888; margin-bottom: 10px;">이전 작전에서 복사해둔 세이브 코드가 있다면 입력하십시오.</p>
+            <div style="display:flex; gap:5px;">
+              <input type="text" id="save-code-input" placeholder="여기에 코드 붙여넣기" style="flex:1; font-size: 0.8rem; background: #000; border: 1px solid #444;" />
+              <button id="btn-load-save-code" style="padding: 5px 10px; font-size: 0.8rem; background: #252;">로드</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 2: 챕터 선택 -->
+        <div id="step-chapter" style="display:none;">
+          <h1>스토리 챕터 선택</h1>
+          <p>수행할 임무를 선택하십시오.</p>
+          <div class="chapter-list">
+            <button class="chapter-btn" id="btn-select-ch1">
+              제 1장: 흑주택 토벌 작전
+              <div class="chapter-desc">1급 위험 지정 폐가. 깊은 지하실의 원흉을 찾아라.</div>
+            </button>
+            <button class="chapter-btn locked" disabled>
+              제 2장: 미발견
+              <div class="chapter-desc">해당 구역의 정보가 아직 해금되지 않았습니다.</div>
+            </button>
+          </div>
+        </div>
+
+        <!-- STEP 3: 브리핑 및 대기실 -->
+        <div id="step-waiting" style="display:none;">
+          <h1>[제 1장] 흑주택 토벌 작전</h1>
+          <p
+            style="text-align: left; font-size: 0.95rem; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 8px;">
+            📍 <b>목표:</b> 흉가 지하실에 숨은 원흉 소멸<br /><br />
+            악령들이 둥지를 틀어 주변에 저주를 퍼뜨리고 있습니다.
+            오컬트 조사단(고정 파티 4명)의 정신이 완전히 침식되기 전에, 저주를 뚫고 들어가 원흉을 찾으십시오.
+          </p>
+
+          <div class="lobby-players">
+            <h3>현재 작전 대기 인원</h3>
+            <ul id="lobby-player-list"></ul>
+          </div>
+
+          <button id="start-btn" class="start-btn" disabled>작전 구역 진입 (인원 무관)</button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 왼쪽 화면: 인게임 뷰 (로비가 끝나면 보임) -->
+    <div id="ingame-view" class="ingame-view" style="display:none;">
+
+      <!-- 왼쪽 1: 파티원 상태 창 -->
+      <aside class="party-panel">
+        <h2 class="panel-title">고정 파티 상태</h2>
+        <div id="party-list" class="party-list">
+          <!-- JS로 동적 렌더링 됨 -->
+        </div>
+
+        <div class="enemy-panel">
+          <h2 class="panel-title enemy-title">적/구역 상태</h2>
+          <div id="enemy-list" class="enemy-list">
+            <!-- JS로 동적 렌더링 됨 -->
+          </div>
+        </div>
+
+        <div class="guide-panel">
+          <h3 class="guide-title">명령어 가이드</h3>
+          <ul class="guide-list">
+            <li><code>[진행 행동] 진입, 둘러보기, 탐색 [대상]</code></li>
+            <li><code>공격 [적 이름]</code></li>
+            <li><code>스킬 [스킬명] [대상]</code></li>
+            <li><code>방어</code></li>
+          </ul>
+        </div>
+      </aside>
+
+      <!-- 중앙: 로그 및 인게임 액션 창 -->
+      <main class="console-panel">
+        <div class="console-header">
+          <span class="location-badge" id="location-badge">현재 위치: 알 수 없음</span>
+          <span class="turn-badge" id="turn-indicator">대기 중...</span>
+        </div>
+
+        <div id="game-log" class="game-log"></div>
+
+        <div class="input-area">
+          <span class="prompt-symbol">&gt;</span>
+          <input type="text" id="command-input" placeholder="이번 턴 캐릭터의 행동을 빠르게 명령하세요!" autocomplete="off" disabled>
+          <button id="send-btn" disabled>실행</button>
+        </div>
+        <div class="reset-area" style="margin-top:10px; display:flex; justify-content: space-between; align-items: center;">
+          <button id="btn-get-save-code"
+            style="padding:5px 10px; font-size:0.75rem; background:#242; color:#cfc; border:1px solid #363; cursor:pointer;">💾
+            현재 진행 세이브 코드 복사</button>
+          <button id="btn-lobby-reset"
+            style="padding:5px 10px; font-size:0.75rem; background:#522; color:#fff; border:1px solid #722; cursor:pointer; opacity:0.6;">↩
+            로비로 돌아가기 (초기화)</button>
+        </div>
+      </main>
+    </div> <!-- // ingame-view -->
+
+    <!-- 오른쪽: 개별 채팅 패널 -->
+    <aside class="chat-panel">
+      <h2 class="chat-title">통신망 (채팅창)</h2>
+      <div class="chat-users">
+        <span class="user-count-label">현재 통신 연결:</span> <span id="chat-user-count" class="user-count">0명</span>
+        <ul id="chat-user-list"></ul>
+      </div>
+      <div id="chat-log" class="chat-log"></div>
+      <div class="chat-input-area">
+        <input type="text" id="chat-input" placeholder="메시지 입력..." autocomplete="off">
+        <button id="chat-send-btn">전송</button>
+      </div>
+      <!-- 테스트(디버깅) 전용 컨트롤 (배포 시 제거)
+      <div id="debug-controls"
+        style="padding: 10px; background: rgba(255,100,100,0.1); border-top: 1px solid rgba(255,100,100,0.3);">
+        <h4 style="margin:0 0 5px 0; color:#ffb0b0; font-size:0.8rem;">🛠️ [테스트 전용] 스킵</h4>
+        <div style="display:flex; gap:5px; flex-wrap:wrap;">
+          <button id="btn-skip-hallway"
+            style="padding:5px; font-size:0.75rem; background:#442; color:#da0; cursor:pointer;">1층 복도 직행</button>
+          <button id="btn-skip-kitchen"
+            style="padding:5px; font-size:0.75rem; background:#442; color:#da0; cursor:pointer;">주방(대기) 직행</button>
+          <button id="btn-skip-2f"
+            style="padding:5px; font-size:0.75rem; background:#442; color:#da0; cursor:pointer;">2층 복도 직행</button>
+          <button id="btn-skip-room2f-wait"
+            style="padding:5px; font-size:0.75rem; background:#722; color:#fa0; cursor:pointer;">안방(대기) 직행</button>
+          <button id="btn-skip-shrine"
+            style="padding:5px; font-size:0.75rem; background:#227; color:#fff; cursor:pointer;">지하실 사당 직행</button>
+        </div>
+      </div>
+      -->
+    </aside>
+
+  </div>
+  <script src="app.js"></script>
+</body>
+
+</html>

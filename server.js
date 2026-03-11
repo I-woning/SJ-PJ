@@ -1,6 +1,8 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -60,6 +62,48 @@ function createInitialGameState() {
         turnOwner: null
     };
 }
+
+// [유틸] Fisher-Yates 셔플 (정확한 균등 분배)
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
+const SAVE_FILE = path.join(__dirname, 'server_state.json');
+
+// [세이브] 서버 상태를 파일에 기록
+function saveServerState() {
+    try {
+        const data = JSON.stringify(rooms);
+        fs.writeFileSync(SAVE_FILE, data, 'utf8');
+    } catch (e) {
+        console.error('[서버 세이브 에러]', e);
+    }
+}
+
+// [로드] 서버 시작 시 파일에서 상태 복구
+function loadServerState() {
+    try {
+        if (fs.existsSync(SAVE_FILE)) {
+            const data = fs.readFileSync(SAVE_FILE, 'utf8');
+            const savedRooms = JSON.parse(data);
+            // 복구된 방들에 대해 타이머 등 비직렬화된 데이터 초기화
+            for (const id in savedRooms) {
+                savedRooms[id]._watchdogTimer = null;
+                rooms[id] = savedRooms[id];
+            }
+            console.log(`[서버 로드 완료] ${Object.keys(rooms).length}개의 방 복구됨.`);
+        }
+    } catch (e) {
+        console.error('[서버 로드 에러]', e);
+    }
+}
+
+// 서버 시작 시 로드 실행
+loadServerState();
 
 // 방 목록 동기화 헬퍼
 function broadcastRoomList() {
@@ -1137,6 +1181,7 @@ io.on('connection', (socket) => {
                 syncInputState(roomInfo.roomId, "⚠️ 입력 처리 중 오류가 발생했습니다. 다시 시도하십시오.");
             }
         }
+        saveServerState();
     });
 
     socket.on('debug_skip', (target) => {
@@ -1198,6 +1243,59 @@ io.on('connection', (socket) => {
         } catch (e) {
             console.error('[debug_skip 에러]', e);
             socket.emit('game_error', '디버그 워프(Skip) 처리 중 오류가 발생했습니다.');
+        }
+        saveServerState();
+    });
+
+    socket.on('get_save_code', () => {
+        try {
+            const roomInfo = getSocketRoom(socket);
+            if (!roomInfo || !roomInfo.gameState) {
+                socket.emit('game_error', '저장할 게임 상태가 없습니다.');
+                return;
+            }
+            const { gameState } = roomInfo;
+            const saveStateString = JSON.stringify(gameState);
+            const saveCode = Buffer.from(saveStateString).toString('base64');
+            socket.emit('save_code_generated', saveCode);
+            broadcastRoomLog(roomInfo.roomId, "💾 게임 저장 코드가 생성되었습니다.", "system-msg");
+        } catch (e) {
+            console.error('[get_save_code 에러]', e);
+            socket.emit('game_error', '저장 코드 생성 중 오류가 발생했습니다.');
+        }
+    });
+
+    socket.on('load_save_code', (saveCode) => {
+        try {
+            const roomInfo = getSocketRoom(socket);
+            if (!roomInfo) {
+                socket.emit('game_error', '방 정보를 찾을 수 없습니다.');
+                return;
+            }
+            const { roomId } = roomInfo;
+            const decodedStateString = Buffer.from(saveCode, 'base64').toString('utf8');
+            const loadedGameState = JSON.parse(decodedStateString);
+
+            // 현재 방의 클라이언트 목록은 유지하고, 나머지 게임 상태를 로드된 상태로 덮어씌움
+            const currentClients = rooms[roomId].clients;
+            rooms[roomId] = loadedGameState;
+            rooms[roomId].clients = currentClients; // 클라이언트 목록 복원
+            rooms[roomId].roomId = roomId; // roomId 복원 (혹시 저장 시 누락될 경우 대비)
+
+            const gameState = rooms[roomId]; // 참조 업데이트
+
+            io.to(roomId).emit('save_code_loaded');
+            io.to(roomId).emit('game_started'); // 로드된 게임은 시작된 상태로 간주
+            io.to(roomId).emit('lobby_update', gameState.clients, gameState.isStarted);
+            io.to(roomId).emit('location_update', gameState.location);
+            broadcastRoomLog(roomId, "✅ 게임이 성공적으로 로드되었습니다.", "system-msg");
+            broadcastRoomState(roomId);
+            syncInputState(roomId); // 입력 상태 동기화
+
+            saveServerState(); // 상태 변경 후 저장
+        } catch (e) {
+            console.error('[load_save_code 에러]', e);
+            socket.emit('game_error', '저장 코드 로드 중 오류가 발생했습니다. 코드를 확인해주세요.');
         }
     });
 
@@ -1310,8 +1408,10 @@ function startIncantationTurn(roomId) {
     const gs = rooms[roomId];
     if (!gs) return;
     // 영창 모드에서는 4명 모두의 턴을 순차적으로(하지만 섞인 순서로) 진행
+    // [버그수정] 균등 셔플(Fisher-Yates)을 사용하여 4명이 한 번씩 공평하게 나오도록 함
     if (!gs.incantationQueue || gs.incantationQueue.length === 0) {
-        gs.incantationQueue = [...gs.party.filter(p => p.hp > 0)].sort(() => 0.5 - Math.random());
+        const aliveParticipants = gs.party.filter(p => p.hp > 0);
+        gs.incantationQueue = shuffleArray([...aliveParticipants]);
     }
     const actor = gs.incantationQueue.shift();
     gs.turnOwner = actor;

@@ -215,6 +215,43 @@ if (btnLobbyReset) {
   });
 }
 
+// [세이브/로드 UI 로직]
+const btnGetSaveCode = document.getElementById('btn-get-save-code');
+const btnLoadSaveCode = document.getElementById('btn-load-save-code');
+const saveCodeInput = document.getElementById('save-code-input');
+
+if (btnGetSaveCode) {
+  btnGetSaveCode.addEventListener('click', () => {
+    socket.emit('get_save_code');
+  });
+}
+
+if (btnLoadSaveCode) {
+  btnLoadSaveCode.addEventListener('click', () => {
+    const code = saveCodeInput.value.trim();
+    if (!code) return alert('로드할 세이브 코드를 입력하세요!');
+    if (confirm('세이브 코드를 사용하여 게임을 복구하시겠습니까? 현재 진행 중인 정보는 덮어씌워질 수 있습니다.')) {
+      socket.emit('load_save_code', code);
+    }
+  });
+}
+
+socket.on('save_code_generated', (code) => {
+  // 클립보드 복사
+  navigator.clipboard.writeText(code).then(() => {
+    alert('현재 진행 상태가 세이브 코드로 복사되었습니다!\n나중에 로비에서 이 코드를 입력하여 복구할 수 있습니다.');
+  }).catch(err => {
+    console.error('클립보드 복사 실패:', err);
+    // 폴백: 로그에 출력
+    console.log('SAVE CODE:', code);
+    alert('세이브 코드 복사에 실패했습니다. 콘솔(F12)에서 확인하거나 다시 시도해주세요.');
+  });
+});
+
+socket.on('save_code_loaded', () => {
+  saveCodeInput.value = '';
+});
+
 socket.on('force_lobby', () => {
   sessionStorage.removeItem('tm2_roomId');
   location.reload();
@@ -302,20 +339,24 @@ socket.on('story_input_start', (placeholder) => {
   sendBtn.disabled = false;
   inputEl.placeholder = placeholder || "명령을 입력하세요...";
 
-  // 통신 채팅 중(메시지 입력 중)이면 게임 입력창으로 포커스를 뺏지 않음
+  // [커서 버그 수정] 게임 진행 시 강제 포커싱 제거하여 채팅 흐름 방해 방지
+  /*
   if (document.activeElement !== chatInputEl) {
     inputEl.focus();
   }
+  */
 });
 
 // 전투 모드 입력 대기
 socket.on('turn_start', (turnOwner, serverPlaceholder) => {
   inputEl.disabled = false;
   sendBtn.disabled = false;
-
+  // [커서 버그 수정]
+  /*
   if (document.activeElement !== chatInputEl) {
     inputEl.focus();
   }
+  */
 
   if (serverPlaceholder) {
     inputEl.placeholder = serverPlaceholder;
