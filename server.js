@@ -4,7 +4,10 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+    pingTimeout: 60000,    // 60초 (기본 20초) - 브라우저 과부하 시에도 연결 유지
+    pingInterval: 30000    // 30초 (기본 25초)
+});
 
 app.use(express.static('public'));
 
@@ -87,6 +90,62 @@ io.on('connection', (socket) => {
         socket.nickname = name;
         console.log(`Nickname set: ${socket.id} -> ${name}`);
         broadcastRoomList();
+    });
+
+    // [세션 복원] 새로고침/재접속 시 기존 방에 자동 복귀
+    socket.on('rejoin_room', ({ nickname, roomId }) => {
+        const room = rooms[roomId];
+        if (!room) {
+            socket.emit('rejoin_failed');
+            return;
+        }
+        socket.nickname = nickname;
+
+        // 기존 클라이언트 항목의 socketId를 새 소켓으로 교체
+        const existingClient = room.clients.find(c => c.nickname === nickname);
+        if (existingClient) {
+            existingClient.socketId = socket.id;
+        } else {
+            room.clients.push({ socketId: socket.id, nickname: nickname });
+        }
+
+        socket.join(roomId);
+        console.log(`[세션복원] ${nickname} -> room ${roomId} (phase: ${room.phase})`);
+
+        // 게임 상태 일괄 재전송
+        if (room.isStarted) {
+            socket.emit('game_started');
+            socket.emit('location_update', room.location);
+            socket.emit('state_update', room.party, room.enemies, room.turnOwner, room.phase);
+
+            if (room.isWaitingForInput) {
+                if (room.phase === 'COMBAT' || room.phase === 'INCANTATION') {
+                    socket.emit('turn_start', room.turnOwner, room.lastPlaceholder);
+                } else {
+                    const prompts = {
+                        'STORY_ENTRANCE': "▶ '진입' 이라고 명령하십시오.",
+                        'STORY_HALLWAY': "▶ '전투 준비' 라고 명령하십시오.",
+                        'STORY_KITCHEN_WAIT': "▶ '전투 준비' 라고 명령하십시오.",
+                        'STORY_KITCHEN_FIND': "▶ '둘러보기' 혹은 '탐색 [장소]'를 입력하세요.",
+                        'STORY_2F_HALLWAY': "▶ '이동 안방', '대기', '탐색' 중 선택하십시오.",
+                        'STORY_AFTER_COMBAT': "▶ '이동', '대기', '탐색', '개인정비' 중 선택하십시오.",
+                        'STORY_AFTER_KITCHEN': "▶ '이동 2층', '대기', '탐색', '개인정비' 중 선택하십시오.",
+                        'STORY_AFTER_ROOM2F': "▶ '이동', '둘러보기', '탐색 [대상]', '개인정비' 중 선택하십시오.",
+                        'STORY_AFTER_BASEMENT_ENTRANCE': "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.",
+                        'STORY_BASEMENT_CORE_ENTRY': "▶ '문자를 확인한다' 라고 입력하십시오.",
+                    };
+                    socket.emit('story_input_start', room.lastPlaceholder || prompts[room.phase] || "진행 중입니다. 명령을 입력하세요.");
+                }
+            } else {
+                socket.emit('turn_wait');
+            }
+            socket.emit('rejoin_success', { roomId });
+        } else {
+            // 게임 시작 전이면 로비로
+            socket.emit('room_joined', roomId);
+            io.to(roomId).emit('lobby_update', room.clients, room.isStarted);
+            socket.emit('rejoin_success', { roomId });
+        }
     });
 
     // 2. 방 생성
@@ -1215,8 +1274,7 @@ function broadcastRoomState(roomId) {
     const room = rooms[roomId];
     if (room) {
         io.to(roomId).emit('state_update', room.party, room.enemies, room.turnOwner, room.phase);
-        // 상태 업데이트 시 입기 잠금 상태도 함께 동기화 (Force Sync)
-        syncInputState(roomId);
+        // [최적화] syncInputState 자동 호출 제거 - 필요한 시점에서만 명시적 호출
     }
 }
 
