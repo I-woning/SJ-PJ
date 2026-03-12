@@ -1,5 +1,38 @@
 const socket = io();
 
+// [세션 복원] 새로고침 후 자동 복귀 시도
+(function trySessionRestore() {
+  const savedNickname = sessionStorage.getItem('tm2_nickname');
+  const savedRoomId = sessionStorage.getItem('tm2_roomId');
+  if (savedNickname && savedRoomId) {
+    console.log('[세션복원] 시도:', savedNickname, savedRoomId);
+    socket.emit('rejoin_room', { nickname: savedNickname, roomId: savedRoomId });
+  }
+})();
+
+socket.on('rejoin_success', ({ roomId }) => {
+  console.log('[세션복원] 성공:', roomId);
+  // 로비 UI 숨기고 게임 UI 표시
+  const lobbyView = document.getElementById('lobby-view');
+  const ingameView = document.getElementById('ingame-view');
+  if (lobbyView) lobbyView.style.display = 'none';
+  if (ingameView) ingameView.style.display = 'flex';
+});
+
+socket.on('rejoin_failed', () => {
+  console.log('[세션복원] 실패 - 방이 없음, 로비로 진행');
+  sessionStorage.removeItem('tm2_roomId');
+});
+
+// [DOM 최적화] 로그 요소 수 제한 함수
+const MAX_GAME_LOGS = 200;
+const MAX_CHAT_LOGS = 100;
+function trimLogs(container, maxCount) {
+  while (container.childElementCount > maxCount) {
+    container.removeChild(container.firstChild);
+  }
+}
+
 // UI 단계 래퍼
 const stepNickname = document.getElementById('step-nickname');
 const stepChapter = document.getElementById('step-chapter');
@@ -43,6 +76,7 @@ btnSubmitName.addEventListener('click', () => {
 
   socket.emit('join_server', { name });
   myPlayerInfo = { name };
+  sessionStorage.setItem('tm2_nickname', name);
 
   stepNickname.style.display = 'none';
   stepRoomChoice.style.display = 'block';
@@ -78,6 +112,7 @@ socket.on('room_list', (rooms) => {
 });
 
 socket.on('room_joined', (roomId) => {
+  sessionStorage.setItem('tm2_roomId', roomId);
   stepRoomChoice.style.display = 'none';
   stepChapter.style.display = 'block';
 });
@@ -126,6 +161,7 @@ socket.on('game_error', (msg) => {
   el.innerHTML = `⚠️ <span style="color:#ff4a4a; font-weight:bold;">[입력 오류]</span> ${msg}`;
   logEl.appendChild(el);
   logEl.scrollTop = logEl.scrollHeight;
+  trimLogs(logEl, MAX_GAME_LOGS);
 });
 
 // [채팅 로직]
@@ -153,6 +189,7 @@ socket.on('chat_message', ({ sender, msg, type }) => {
   }
   chatLogEl.appendChild(el);
   chatLogEl.scrollTop = chatLogEl.scrollHeight;
+  trimLogs(chatLogEl, MAX_CHAT_LOGS);
 });
 
 // [디버그 컨트롤 로직]
@@ -178,8 +215,46 @@ if (btnLobbyReset) {
   });
 }
 
+// [세이브/로드 UI 로직]
+const btnGetSaveCode = document.getElementById('btn-get-save-code');
+const btnLoadSaveCode = document.getElementById('btn-load-save-code');
+const saveCodeInput = document.getElementById('save-code-input');
+
+if (btnGetSaveCode) {
+  btnGetSaveCode.addEventListener('click', () => {
+    socket.emit('get_save_code');
+  });
+}
+
+if (btnLoadSaveCode) {
+  btnLoadSaveCode.addEventListener('click', () => {
+    const code = saveCodeInput.value.trim();
+    if (!code) return alert('로드할 세이브 코드를 입력하세요!');
+    if (confirm('세이브 코드를 사용하여 게임을 복구하시겠습니까? 현재 진행 중인 정보는 덮어씌워질 수 있습니다.')) {
+      socket.emit('load_save_code', code);
+    }
+  });
+}
+
+socket.on('save_code_generated', (code) => {
+  // 클립보드 복사
+  navigator.clipboard.writeText(code).then(() => {
+    alert('현재 진행 상태가 세이브 코드로 복사되었습니다!\n나중에 로비에서 이 코드를 입력하여 복구할 수 있습니다.');
+  }).catch(err => {
+    console.error('클립보드 복사 실패:', err);
+    // 폴백: 로그에 출력
+    console.log('SAVE CODE:', code);
+    alert('세이브 코드 복사에 실패했습니다. 콘솔(F12)에서 확인하거나 다시 시도해주세요.');
+  });
+});
+
+socket.on('save_code_loaded', () => {
+  saveCodeInput.value = '';
+});
+
 socket.on('force_lobby', () => {
-  location.reload(); // 가장 확실한 초기화 방법
+  sessionStorage.removeItem('tm2_roomId');
+  location.reload();
 });
 
 
@@ -237,10 +312,14 @@ socket.on('state_update', (party, enemies, turnOwner, phase) => {
     if (isPartyTurn) {
       turnIndicator.innerText = `[${turnOwner.name}] 턴 대기 중...`;
     } else {
-      turnIndicator.innerText = `적 행동 중...`;
+      turnIndicator.innerText = `...`;
     }
-  } else if (phase === 'STORY_ENTRANCE') {
-    turnIndicator.innerText = `스토리 씬 진행 중`;
+  } else {
+    if (phase === 'STORY_ENTRANCE') {
+      turnIndicator.innerText = `스토리 씬 진행 중`;
+    } else {
+      turnIndicator.innerText = `상호작용 대기 중`;
+    }
   }
 });
 
@@ -250,6 +329,7 @@ socket.on('action_result', ({ msg, className }) => {
   el.innerHTML = msg;
   logEl.appendChild(el);
   logEl.scrollTop = logEl.scrollHeight;
+  trimLogs(logEl, MAX_GAME_LOGS);
 });
 
 // [글로벌 다중 컨트롤 입력 처리]
@@ -258,16 +338,29 @@ socket.on('story_input_start', (placeholder) => {
   inputEl.disabled = false;
   sendBtn.disabled = false;
   inputEl.placeholder = placeholder || "명령을 입력하세요...";
-  inputEl.focus();
+
+  // [커서 버그 수정] 게임 진행 시 강제 포커싱 제거하여 채팅 흐름 방해 방지
+  /*
+  if (document.activeElement !== chatInputEl) {
+    inputEl.focus();
+  }
+  */
 });
 
 // 전투 모드 입력 대기
-socket.on('turn_start', (turnOwner) => {
+socket.on('turn_start', (turnOwner, serverPlaceholder) => {
   inputEl.disabled = false;
   sendBtn.disabled = false;
-  inputEl.focus();
+  // [커서 버그 수정]
+  /*
+  if (document.activeElement !== chatInputEl) {
+    inputEl.focus();
+  }
+  */
 
-  if (turnOwner) {
+  if (serverPlaceholder) {
+    inputEl.placeholder = serverPlaceholder;
+  } else if (turnOwner) {
     const SKILL_HINTS = {
       '무당': '스킬 징치기',
       '퇴마사': '스킬 사인검베기 [적/아군]',

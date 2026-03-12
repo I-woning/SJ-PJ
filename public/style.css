@@ -265,6 +265,7 @@ body {
   flex-direction: column;
   background-color: var(--bg-color);
   position: relative;
+  z-index: 1000;
 }
 
 .console-header {
@@ -431,6 +432,52 @@ body {
 #send-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* --- 추가: 리셋 및 세이브 버튼 영역 --- */
+.reset-area {
+  margin: 10px 20px 15px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
+}
+
+.secondary-btn {
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  border: 1px solid transparent;
+}
+
+#btn-get-save-code {
+  background: rgba(80, 227, 194, 0.1);
+  color: #50e3c2;
+  border-color: rgba(80, 227, 194, 0.3);
+}
+
+#btn-get-save-code:hover {
+  background: rgba(80, 227, 194, 0.2);
+  border-color: #50e3c2;
+}
+
+#btn-lobby-reset {
+  background: rgba(255, 74, 74, 0.1);
+  color: var(--accent-red);
+  border-color: rgba(255, 74, 74, 0.3);
+  opacity: 0.7;
+}
+
+#btn-lobby-reset:hover {
+  background: rgba(255, 74, 74, 0.2);
+  border-color: var(--accent-red);
+  opacity: 1;
 }
 
 /* --- 오른쪽 패널 (채팅창) --- */
