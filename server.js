@@ -448,6 +448,12 @@ function syncInputState(roomId, customPlaceholder = null) {
     if (customPlaceholder) gs.lastPlaceholder = customPlaceholder;
 
     if (gs.isWaitingForInput) {
+        // [우선순위 1] 명시적 커스텀 플레이스홀더 (인자로 전달된 경우)
+        if (customPlaceholder) {
+            io.to(roomId).emit('story_input_start', customPlaceholder);
+            return;
+        }
+
         if (gs.phase === 'COMBAT') {
             const currentActor = gs.turnOwner;
             if (currentActor) {
@@ -615,8 +621,8 @@ function nextTurn(roomId) {
                         setTimeout(() => {
                             broadcastRoomLog(roomId, "🌑 \"그렇지 않다고 생각하나? 그렇다면 말해보거라 너가 지금까지 같이 해온 친구들의 이름과 너의 이름을\"", "combat-msg");
                             const idList = gameState.clients.map(c => c.nickname).join(', ');
-                            syncInputState(roomId, `▶ 같이 진행해온 이들의 이름을 입력하세요. (예: ${idList})`);
                             gameState.isWaitingForInput = true;
+                            syncInputState(roomId, `▶ 같이 진행해온 이들의 이름을 입력하세요. (예: ${idList})`);
                         }, 2500);
                     }, 2500);
                 }
