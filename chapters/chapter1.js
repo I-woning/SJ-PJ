@@ -528,6 +528,35 @@ module.exports = {
         if (gameState.phase === 'STORY_AFTER_ROOM2F') {
             if (!gameState.isWaitingForInput) return true;
             const cmd = parseCommand(trimmed);
+            if (trimmed === '대기' || (cmd && cmd.action === 'WAIT')) {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 대기`, "user-cmd-msg");
+                gameState.waitCount++;
+                if (gameState.waitCount > 3) gameState.party.forEach(p => p.mp = Math.max(0, p.mp - 5));
+                broadcastRoomState(roomId);
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return true;
+            } else if (trimmed === '개인정비' || (cmd && cmd.action === 'REST')) {
+                gameState.isWaitingForInput = false;
+                io.to(roomId).emit('turn_wait');
+                broadcastRoomLog(roomId, `> <span style="color:#f5c518; font-size:0.8rem;">[${nickname} 제어]</span>: 개인정비`, "user-cmd-msg");
+                if (!gameState.hasRested) {
+                    gameState.hasRested = true;
+                    gameState.party.forEach(p => { p.hp = Math.min(p.maxHp, p.hp + Math.floor(p.maxHp*0.15)); p.mp = Math.min(p.maxMp||100, p.mp + 15); });
+                    broadcastRoomLog(roomId, "🍀 정비를 진행했습니다. (HP/MP +15%)", "heal-msg");
+                    broadcastRoomState(roomId);
+                } else broadcastRoomLog(roomId, "이미 정비를 마쳤습니다.");
+                setTimeout(() => {
+                    gameState.isWaitingForInput = true;
+                    io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오.");
+                }, 1000);
+                return true;
+            }
+
             if (gameState.waitingForCoatUser) {
                 const target = gameState.party.find(p => p.name === trimmed && p.hp > 0);
                 if (target) {
@@ -535,7 +564,7 @@ module.exports = {
                     gameState.waitingForCoatUser = false;
                     broadcastRoomLog(roomId, `🧥 **[${target.name}]**이 코트를 걸쳤습니다.`, "heal-msg");
                     broadcastRoomState(roomId);
-                    setTimeout(() => { gameState.isWaitingForInput = true; io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색' 중 선택하십시오."); }, 1000);
+                    setTimeout(() => { gameState.isWaitingForInput = true; io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오."); }, 1000);
                 } else io.to(roomId).emit('story_input_start', "▶ 이름을 정확히 입력하세요.");
                 return true;
             }
@@ -555,7 +584,7 @@ module.exports = {
                     gameState.returnPhase = 'STORY_AFTER_ROOM2F';
                     startCombatCycle(roomId);
                 } else broadcastRoomLog(roomId, "안방에는 **[옷장]**, **[화장대]**, **[서랍장]**이 보입니다.");
-                setTimeout(() => { if (!gameState.waitingForCoatUser && gameState.phase !== 'COMBAT') { gameState.isWaitingForInput = true; io.to(roomId).emit('story_input_start', "▶ '이동', '둘러보기', '탐색' 중 선택하십시오."); } }, 1000);
+                setTimeout(() => { if (gameState.phase !== 'COMBAT') { gameState.isWaitingForInput = true; io.to(roomId).emit('story_input_start', gameState.waitingForCoatUser ? "▶ 코트를 입을 캐릭터의 이름을 입력하세요." : "▶ '이동', '둘러보기', '탐색', '개인정비' 중 선택하십시오."); } }, 1000);
             } else if (trimmed === '이동 지하실' || (cmd && cmd.action === 'MOVE')) {
                 gameState.isWaitingForInput = false;
                 io.to(roomId).emit('turn_wait');
