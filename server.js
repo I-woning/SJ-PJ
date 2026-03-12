@@ -239,6 +239,31 @@ io.on('connection', (socket) => {
         io.to(roomInfo.roomId).emit('lobby_update', roomInfo.gameState.clients, roomInfo.gameState.isStarted);
     });
 
+    socket.on('start_game', () => {
+        const roomInfo = getSocketRoom(socket);
+        if (!roomInfo || roomInfo.gameState.isStarted) return;
+        const { roomId, gameState } = roomInfo;
+
+        const chapter = chapters.get(gameState.activeChapterId);
+        if (!chapter) return socket.emit('game_error', '유효하지 않은 챕터입니다.');
+
+        // 챕터별 초기 상태 병합
+        const chapterInitialState = chapter.getInitialState();
+        Object.assign(gameState, chapterInitialState);
+
+        gameState.isStarted = true;
+        
+        io.to(roomId).emit('game_started');
+        io.to(roomId).emit('location_update', gameState.location);
+        io.to(roomId).emit('lobby_update', gameState.clients, gameState.isStarted);
+        broadcastRoomList();
+
+        // 챕터별 인트로 실행
+        chapter.startIntro(io, roomId, gameState);
+        
+        saveServerState();
+    });
+
     socket.on('chat_message', (msg) => {
         const roomInfo = getSocketRoom(socket);
         const senderName = socket.nickname || '익명';

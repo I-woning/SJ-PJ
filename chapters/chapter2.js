@@ -12,6 +12,13 @@ module.exports = {
         // 챕터 2 전용 상태들...
     }),
 
+    startIntro: (io, roomId, gameState) => {
+        const broadcastRoomLog = (rId, msg, cls) => io.to(rId).emit('chat_message', { sender: 'SYSTEM', msg, type: cls || 'system' });
+        broadcastRoomLog(roomId, "새로운 전설, 챕터 2의 막이 오릅니다...", "system-msg");
+        gameState.isWaitingForInput = true;
+        io.to(roomId).emit('story_input_start', "▶ '진입'을 입력하여 시작하세요.");
+    },
+
     handleInput: (socket, roomId, gameState, nickname, trimmed, helpers) => {
         const { io, broadcastRoomLog, syncInputState } = helpers;
 

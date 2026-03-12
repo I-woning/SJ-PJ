@@ -29,6 +29,20 @@ module.exports = {
         currentIncantation: ""
     }),
 
+    // 챕터별 인트로 실행
+    startIntro: (io, roomId, gameState) => {
+        const broadcastRoomLog = (rId, msg, cls) => io.to(rId).emit('chat_message', { sender: 'SYSTEM', msg, type: cls || 'system' });
+        
+        broadcastRoomLog(roomId, "검은 안개에 휩싸인 '흑주택'의 육중한 담장 앞에 도착했습니다.", "system-msg");
+        broadcastRoomLog(roomId, "비릿한 피 냄새와 서늘한 냉기가 저택 틈새로 흘러나오는 것이 느껴집니다.");
+        broadcastRoomLog(roomId, "결계를 깨고 진입하면 소멸하지 않는 이상 되돌아갈 수 없습니다. 준비가 되었습니까?");
+        
+        gameState.isWaitingForInput = true;
+        
+        // 입력 가이드 전송 (placeholder)
+        io.to(roomId).emit('story_input_start', "▶ '진입' 이라고 명령하십시오.");
+    },
+
     // 챕터 전용 입력 처리 (server.js의 user_input에서 이관)
     handleInput: (socket, roomId, gameState, nickname, trimmed, helpers) => {
         const { io, broadcastRoomLog, broadcastRoomState, syncInputState, startCombatCycle, startIncantationTurn, startEnding, parseCommand, executePlayerAction, nextTurn, safeNextTurn } = helpers;
