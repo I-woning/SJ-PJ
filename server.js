@@ -328,8 +328,6 @@ io.on('connection', (socket) => {
             if (!gameState.isStarted) {
                 gameState.isStarted = true;
                 io.to(roomId).emit('game_started');
-                io.to(roomId).emit('lobby_update', gameState.clients, gameState.isStarted);
-                broadcastRoomList();
             }
 
             const helpers = { broadcastRoomLog, broadcastRoomState, syncInputState };
@@ -366,31 +364,53 @@ io.on('connection', (socket) => {
 
     socket.on('load_save_code', (saveCode) => {
         try {
-            const roomInfo = getSocketRoom(socket);
-            if (!roomInfo) return;
-            const { roomId } = roomInfo;
             const decodedStateString = Buffer.from(saveCode, 'base64').toString('utf8');
             const loadedGameState = JSON.parse(decodedStateString);
+            
+            if (!loadedGameState || typeof loadedGameState !== 'object') {
+                throw new Error('유효하지 않은 세이브 데이터 형식입니다.');
+            }
+
+            let roomInfo = getSocketRoom(socket);
+            let roomId;
+
+            if (!roomInfo) {
+                // [신규] 방 없이 로비에서 로드 시 새 방 생성
+                roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
+                rooms[roomId] = createInitialGameState();
+                rooms[roomId].clients.push({ socketId: socket.id, nickname: socket.nickname || '익명' });
+                socket.join(roomId);
+                
+                // 클라이언트에게 방 입장 사실을 알림 (세션 저장용)
+                socket.emit('room_joined', roomId);
+            } else {
+                roomId = roomInfo.roomId;
+            }
 
             const currentClients = rooms[roomId].clients;
             rooms[roomId] = loadedGameState;
             rooms[roomId].clients = currentClients;
             rooms[roomId].roomId = roomId;
+            rooms[roomId].isStarted = true; // 강제 시작 상태로 설정
 
             const gameState = rooms[roomId];
 
+            // 모든 클라이언트에게 상태 로드 알림
             io.to(roomId).emit('save_code_loaded');
             io.to(roomId).emit('game_started');
-            io.to(roomId).emit('lobby_update', gameState.clients, gameState.isStarted);
+            
+            // UI 데이터 동기화
             io.to(roomId).emit('location_update', gameState.location);
-            broadcastRoomLog(roomId, "✅ 게임이 성공적으로 로드되었습니다.", "system-msg");
+            io.to(roomId).emit('lobby_update', gameState.clients, gameState.isStarted);
+
+            broadcastRoomLog(roomId, "✅ 세이브 데이터를 통해 작전이 복구가 완료되었습니다.", "system-msg");
             broadcastRoomState(roomId);
             syncInputState(roomId);
 
             saveServerState();
         } catch (e) {
             console.error('[load_save_code 에러]', e);
-            socket.emit('game_error', '저장 코드 로드 중 오류가 발생했습니다.');
+            socket.emit('game_error', '세이브 코드 로드 실패: ' + e.message);
         }
     });
 

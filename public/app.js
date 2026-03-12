@@ -156,6 +156,11 @@ socket.on('lobby_update', (clients, isStarted) => {
 });
 
 socket.on('game_error', (msg) => {
+  // 로비인 경우 알림창 표시
+  if (ingameView.style.display === 'none' || !ingameView.style.display) {
+    alert(msg);
+  }
+
   const el = document.createElement('div');
   el.className = 'log-entry system-msg log-fade-in';
   el.innerHTML = `⚠️ <span style="color:#ff4a4a; font-weight:bold;">[입력 오류]</span> ${msg}`;
